@@ -50,7 +50,7 @@ andin1st/scriptcmk/
 Jalankan perintah berikut di terminal target Linux untuk mengunduh agen (.deb/.rpm), mengonfigurasi dependensi, memasang 10 skrip pemantauan, dan mengatur Cron Job uji RAM Sabtu jam 11:00 AM:
 
 ```bash
-curl -sSfgL https://raw.githubusercontent.com/andin1st/scriptcmk/main/linux/install.sh | sudo bash -s -- -s 192.168.1.100 -d cmk
+curl -sSfgL https://raw.githubusercontent.com/andin1st/scriptcmk/main/linux/install.sh | sudo bash 
 ```
 
 ### **B. Windows Host (Windows 10, 11, Server)**
