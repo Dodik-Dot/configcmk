@@ -64,10 +64,10 @@ if ($NeedUpdate) {
             $StatusTxt = "Warning"
         }
         
-        $Output = "$Status `"Health_Battery`" -  Status Battery : $State ❘ Design Capacity : $($DesignWh)w/h ❘ Current Capacity : $($FullWh)w/h ❘ Health : $($Health)% ❘ Battery Level : $($BatteryLevel)%"
+        $Output = "$Status `"Health_Battery`" -  Status Battery : $State | Design Capacity : $($DesignWh)w/h | Current Capacity : $($FullWh)w/h | Health : $($Health)% | Battery Level : $($BatteryLevel)%"
     } else {
         # PC Desktop / No Battery
-        $Output = "0 `"Health_Battery`" -  Status Battery : N/A ❘ Device is PC/Desktop, there is no battery."
+        $Output = "0 `"Health_Battery`" -  Status Battery : N/A | Device is PC/Desktop, there is no battery."
     }
     
     $Output | Out-File -FilePath $CacheFile -Encoding utf8 -Force
