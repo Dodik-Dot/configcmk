@@ -109,12 +109,12 @@ if ($NeedUpdate) {
             
             if ($MediaType -eq "HDD") {
                 # HDD Status Output
-                $OutputLine = "$StatusVal `"$ServiceName`" - Status : $StatusText ❘ Model: $Model ($($SizeGB) GB) ❘ Status: $SmartStatus ❘ Temp: $($Temp)C ❘ Disk Type: HDD ❘ Reallocated Sectors: 0 ❘ Pending Sectors: 0 ❘ Power On Hours: $Poh Hrs ❘ Remark: Disk Condition Good"
+                $OutputLine = "$StatusVal `"$ServiceName`" - Status : $StatusText | Model: $Model ($($SizeGB) GB) | Status: $SmartStatus | Temp: $($Temp)C | Disk Type: HDD | Reallocated Sectors: 0 | Pending Sectors: 0 | Power On Hours: $Poh Hrs | Remark: Disk Condition Good"
             } else {
                 # SSD/NVMe Status Output
                 $ReadStr = "$($ReadTB) TB"
                 $WriteStr = "$($WriteTB) TB"
-                $OutputLine = "$StatusVal `"$ServiceName`" - Status : $StatusText ❘ Model: $Model ($($SizeGB) GB) ❘ Status: $SmartStatus ❘ Temp: $($Temp)C ❘ Type: $DiskType ($($SizeGB) GB) ❘ Health: $($Health)% ❘ Read: $ReadStr ❘ Written: $WriteStr ❘ Write/Day: $WriteDay"
+                $OutputLine = "$StatusVal `"$ServiceName`" - Status : $StatusText | Model: $Model ($($SizeGB) GB) | Status: $SmartStatus | Temp: $($Temp)C | Type: $DiskType ($($SizeGB) GB) | Health: $($Health)% | Read: $ReadStr | Written: $WriteStr | Write/Day: $WriteDay"
             }
             
             $OutputLine | Out-File -FilePath $CacheFile -Encoding utf8 -Append

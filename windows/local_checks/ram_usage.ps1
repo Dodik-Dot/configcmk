@@ -25,4 +25,4 @@ if ($UsedPct -ge 95) {
     $StatusTxt = "Warning"
 }
 
-Write-Output "$Status `"RAM_Usage`" - Status : $StatusTxt ❘ Used: $($UsedPct)% ❘ Used Space: $($UsedGB) GB ❘ Free: $($FreeGB) GB ❘ Total: $($TotalGB) GB"
+Write-Output "$Status `"RAM_Usage`" - Status : $StatusTxt | Used: $($UsedPct)% | Used Space: $($UsedGB) GB | Free: $($FreeGB) GB | Total: $($TotalGB) GB"

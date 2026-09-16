@@ -64,12 +64,12 @@ if ($NeedUpdate) {
     
     # Format Detail Output
     if ($RemoteList.Count -gt 0) {
-        $Details = $RemoteList -join " ❘ "
+        $Details = $RemoteList -join " | "
     } else {
         $Details = "No remote apps detected."
     }
     
-    $Output = "0 `"Remote_Apps`" - Status : OK ❘ $Details"
+    $Output = "0 `"Remote_Apps`" - Status : OK | $Details"
     $Output | Out-File -FilePath $CacheFile -Encoding utf8 -Force
 }
 

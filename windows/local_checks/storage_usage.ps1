@@ -59,7 +59,7 @@ if ($NeedUpdate) {
             $StatusTxt = "Warning"
         }
         
-        $OutputLine = "$Status `"$ServiceName`" - Status : $StatusTxt ❘ Partition: $Mount ($Label) ❘ Used: $($UsedPct)% ❘ Free: $($FreeGB) GB ❘ Total: $($TotalGB) GB"
+        $OutputLine = "$Status `"$ServiceName`" - Status : $StatusTxt | Partition: $Mount ($Label) | Used: $($UsedPct)% | Free: $($FreeGB) GB | Total: $($TotalGB) GB"
         $OutputLine | Out-File -FilePath $CacheFile -Encoding utf8 -Append
     }
 }
