@@ -1,13 +1,12 @@
 # =====================================================================
-# Local Check Checkmk: Daily Physical Disk & NVMe SMART Health (Windows)
+# Local Check Checkmk: Daily Active Storage Capacity Monitor (Windows)
 # Scheduled to run once a day at 16:00
 # =====================================================================
-$ErrorActionPreference = 'SilentlyContinue'
 $CacheDir = "$env:ProgramData\checkmk\agent\cache"
 if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force $CacheDir | Out-Null }
-$CacheFile = Join-Path $CacheDir "cache_disk_nvme_health.txt"
+$CacheFile = Join-Path $CacheDir "cache_storage_usage.txt"
 
-# Logika Penjadwalan: Eksekusi Baru Setiap Hari Setelah Pukul 16:00
+# Get current hour and today's 16:00 threshold
 $Now = Get-Date
 $Today16 = Get-Date -Hour 16 -Minute 0 -Second 0
 if ($Now -lt $Today16) {
@@ -25,117 +24,44 @@ if (Test-Path $CacheFile) {
 }
 
 if ($NeedUpdate) {
-    $Lines = [System.Collections.Generic.List[string]]::new()
-    $SmartctlPath = "C:\Program Files\smartmontools\bin\smartctl.exe"
-
-    if (Test-Path $SmartctlPath) {
-        # 1. Deteksi seluruh drive dan parameter device (-d nvme / -d ata) secara dinamis
-        $ScanLines = & $SmartctlPath --scan 2>$null
-        $TargetDevices = @()
-
-        foreach ($line in $ScanLines) {
-            if ($line -match '^(\S+)\s+(.*?)\s*#') {
-                $dev = $Matches[1].Trim()
-                $args = $Matches[2].Trim()
-                $TargetDevices += [PSCustomObject]@{
-                    Device = $dev
-                    Params = ($args -split '\s+')
-                }
-            }
+    if (Test-Path $CacheFile) { Remove-Item $CacheFile -Force }
+    
+    # Get active local volumes (DriveType = 3 represents physical/local disk)
+    $Volumes = Get-CimInstance -ClassName Win32_Volume -Filter "DriveType=3 and DriveLetter <> NULL" -ErrorAction SilentlyContinue
+    
+    foreach ($Volume in $Volumes) {
+        $Mount = $Volume.DriveLetter
+        $Label = $Volume.Label
+        if (-not $Label) { $Label = "Local Disk" }
+        
+        $Capacity = $Volume.Capacity
+        $FreeSpace = $Volume.FreeSpace
+        $Used = $Capacity - $FreeSpace
+        
+        $TotalGB = [Math]::Round($Capacity / 1GB, 2)
+        $FreeGB = [Math]::Round($FreeSpace / 1GB, 2)
+        $UsedGB = [Math]::Round($Used / 1GB, 2)
+        
+        $UsedPct = [int](($Used / $Capacity) * 100)
+        
+        # Clean naming for Checkmk Service Name
+        $CleanMount = $Mount -replace '[^\w\s-]', '' # Convert "C:" to "C"
+        $ServiceName = "Storage_Usage_$CleanMount"
+        
+        # Thresholds: OK < 85%, WARNING >= 85%, CRITICAL >= 95%
+        $Status = 0
+        $StatusTxt = "OK"
+        if ($UsedPct -ge 95) {
+            $Status = 2
+            $StatusTxt = "Critical"
+        } elseif ($UsedPct -ge 85) {
+            $Status = 1
+            $StatusTxt = "Warning"
         }
-
-        # Fallback jika scan tidak mengembalikan device
-        if ($TargetDevices.Count -eq 0) {
-            $TargetDevices += [PSCustomObject]@{ Device = "/dev/sda"; Params = @("-d", "nvme") }
-            $TargetDevices += [PSCustomObject]@{ Device = "/dev/pd0"; Params = @() }
-        }
-
-        foreach ($tgt in $TargetDevices) {
-            $cmdArgs = @("-j", "-a", $tgt.Device) + $tgt.Params
-            $jsonStr = & $SmartctlPath $cmdArgs 2>&1 | Out-String
-            $drive = $jsonStr | ConvertFrom-Json -ErrorAction SilentlyContinue
-
-            if (-not $drive -or -not $drive.model_name) { continue }
-
-            $Model = $drive.model_name.Trim()
-            $CleanModel = ($Model -replace '[^\w\s-]', '' -replace '\s+', ' ').Trim()
-            $ServiceName = "Storage_Health_$CleanModel"
-
-            # Kapasitas Drive
-            $SizeGB = 0
-            if ($drive.user_capacity.bytes) {
-                $SizeGB = [Math]::Round($drive.user_capacity.bytes / 1GB, 2)
-            }
-
-            # SMART Status & Suhu
-            $Passed = $drive.smart_status.passed
-            $SmartStatus = if ($Passed) { "PASSED" } else { "FAILED" }
-            $StatusCode = if ($Passed) { 0 } else { 2 }
-
-            $Temp = if ($drive.temperature.current) { "$($drive.temperature.current)C" } else { "N/A" }
-            
-            # POH (Power On Hours)
-            $POH = if ($drive.power_on_time.hours) { $drive.power_on_time.hours } else { 0 }
-
-            $HealthPct = "100%"
-            $ReadTB = "0 TB"
-            $WrittenTB = "0 TB"
-            $WritePerDay = "N/A"
-            $DriveType = "HDD/SATA"
-
-            # 2. Pembacaan Spesifik Protokol NVMe
-            if ($drive.nvme_smart_health_information_log) {
-                $DriveType = "NVME"
-                $nvme = $drive.nvme_smart_health_information_log
-
-                # Perhitungan Health NVMe (100% - Percentage Used)
-                if ($null -ne $nvme.percentage_used) {
-                    $wear = [int]$nvme.percentage_used
-                    $calcHealth = 100 - $wear
-                    $HealthPct = "$calcHealth%"
-                    if ($calcHealth -le 20) { $StatusCode = 2 }
-                    elseif ($calcHealth -le 50) { $StatusCode = 1 }
-                }
-
-                # 1 Data Unit = 512.000 Bytes (Spesifikasi Standar NVMe)
-                if ($nvme.data_units_read) {
-                    $rBytes = [double]$nvme.data_units_read * 512000
-                    $ReadTB = "$([Math]::Round($rBytes / 1TB, 2)) TB"
-                }
-                if ($nvme.data_units_written) {
-                    $wBytes = [double]$nvme.data_units_written * 512000
-                    $wTB = [Math]::Round($wBytes / 1TB, 2)
-                    $WrittenTB = "$wTB TB"
-
-                    if ($POH -gt 0) {
-                        $days = $POH / 24
-                        if ($days -ge 1) {
-                            $dailyGB = [Math]::Round(($wBytes / 1GB) / $days, 2)
-                            $WritePerDay = "$dailyGB GB/Day"
-                        }
-                    }
-                }
-            } 
-            # 3. Pembacaan Drive SATA / HDD
-            elseif ($drive.ata_smart_attributes.table) {
-                $wearAttr = $drive.ata_smart_attributes.table | Where-Object { $_.name -match "Wearout|Life|Remaining|Endurance" } | Select-Object -First 1
-                if ($wearAttr) {
-                    $HealthPct = "$($wearAttr.value)%"
-                    $DriveType = "SSD SATA"
-                }
-            }
-
-            $StatusTxt = switch ($StatusCode) { 0 { "OK" } 1 { "WARNING" } 2 { "CRITICAL" } }
-            $OutputLine = "$StatusCode `"$ServiceName`" - Status : $StatusTxt | Model: $Model ($SizeGB GB) | Status: $SmartStatus | Temp: $Temp | Type: $DriveType ($SizeGB GB) | Health: $HealthPct | Read: $ReadTB | Written: $WrittenTB | Write/Day: $WritePerDay"
-            $Lines.Add($OutputLine)
-        }
-    } else {
-        $Lines.Add("1 `"Storage_Health`" - smartmontools tidak ditemukan di $SmartctlPath")
+        
+        $OutputLine = "$Status `"$ServiceName`" - Status : $StatusTxt | Partition: $Mount ($Label) | Used: $($UsedPct)% | Free: $($FreeGB) GB | Total: $($TotalGB) GB"
+        $OutputLine | Out-File -FilePath $CacheFile -Encoding utf8 -Append
     }
-
-    [System.IO.File]::WriteAllLines($CacheFile, $Lines, [System.Text.Encoding]::UTF8)
 }
 
-if (Test-Path $CacheFile) {
-    [System.IO.File]::ReadAllLines($CacheFile, [System.Text.Encoding]::UTF8)
-}
+Get-Content $CacheFile -ErrorAction SilentlyContinue
