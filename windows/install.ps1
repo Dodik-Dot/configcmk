@@ -159,6 +159,34 @@ if ($ShouldInstall) {
     }
 }
 
+# =====================================================================
+# 6b. Instalasi Tooling Penyimpanan (Smartmontools / smartctl.exe)
+# =====================================================================
+Write-Host "[-] Memeriksa ketersediaan Smartmontools (smartctl.exe)..." -ForegroundColor Yellow
+
+$SmartctlInstalled = (Test-Path "C:\Program Files\smartmontools\bin\smartctl.exe") -or (Get-Command smartctl.exe -ErrorAction SilentlyContinue)
+
+if ($SmartctlInstalled) {
+    Write-Host "[OK] Smartmontools sudah terpasang. Melewati instalasi winget." -ForegroundColor Green
+} else {
+    $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($WingetCmd) {
+        Write-Host "[-] Memasang Smartmontools via Winget secara silent..." -ForegroundColor Yellow
+        try {
+            $wingetProcess = Start-Process winget.exe -ArgumentList "install smartmontools.smartmontools --silent --accept-source-agreements --accept-package-agreements" -Wait -PassThru
+            if ($wingetProcess.ExitCode -eq 0) {
+                Write-Host "[OK] Smartmontools berhasil dipasang!" -ForegroundColor Green
+            } else {
+                Write-Warning "Pemasangan Smartmontools via Winget selesai dengan kode: $($wingetProcess.ExitCode)"
+            }
+        } catch {
+            Write-Warning "Gagal mengeksekusi Winget: $_"
+        }
+    } else {
+        Write-Warning "Winget tidak ditemukan pada Windows ini. Skrip storage akan berjalan dengan mode fallback WMI."
+    }
+}
+
 # 7. Unduh LibreHardwareMonitorLib.dll untuk Otomatisasi Sensor Perangkat Keras
 Write-Host "[-] Mengunduh pustaka sensor LibreHardwareMonitorLib.dll..." -ForegroundColor Yellow
 $LhmDllPath = Join-Path $AgentLibFolder "LibreHardwareMonitorLib.dll"
