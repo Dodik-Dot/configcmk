@@ -57,16 +57,16 @@ if (-not ) {
     }
 }
 
-# 4. Format Output Checkmk menggunakan pemisah "|"
+# 4. Format Output Checkmk menggunakan pemisah "~"
 if ( -and  -gt 0) {
     # Ambang batas Checkmk (Standar): >1600 RPM = OK, <1600 RPM = Warning
      = 0
     if ( -lt 1600) {  = 1 }
     
-     = " " - Status : OK | FAN Speed : rpm | Sensor:  | Remark: FAN Condition Good"
+     = " " - Status : OK ~ FAN Speed : rpm ~ Sensor:  ~ Remark: FAN Condition Good"
 } else {
     # Fallback jika hardware/laptop tidak mengekspos sensor RPM (Passive Cooling / WMI unavailable)
-     = "0 " - Status : OK | FAN Speed : 0rpm | Remark: Passive Cooling or Sensor Not Exposed"
+     = "0 " - Status : OK ~ FAN Speed : 0rpm ~ Remark: Passive Cooling or Sensor Not Exposed"
 }
 
 Write-Output 
