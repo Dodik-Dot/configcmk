@@ -17,7 +17,7 @@ CACHE_FILE = os.path.join(CACHE_DIR, "cache_storage_health.txt")
 
 
 def check_cache_valid():
-  """Memeriksa apakah cache masih berlaku berdasarkan batas jam 16:00."""
+  """Memeriksa apakah cache masih berlaku berdasarkan threshold jam 16:00"""
   if not os.path.exists(CACHE_FILE) or os.path.getsize(CACHE_FILE) == 0:
     return False
 
@@ -33,7 +33,7 @@ def check_cache_valid():
 
 
 def get_hdsentinel_data():
-  """Memindai seluruh drive menggunakan HDSentinel Linux jika terpasang."""
+  """Memindai seluruh drive menggunakan HDSentinel Linux jika terpasang"""
   hds_bin = shutil.which("hdsentinel")
   if not hds_bin:
     for p in [
@@ -125,27 +125,26 @@ def parse_smartctl_output(text, device_name, hds_info=None):
     if not line_strip:
       continue
 
-    # 1. Parse Nama Model
+    # Parse Model
     if line_strip.startswith("Model Number:") or line_strip.startswith(
         "Device Model:"
     ):
       model = line_strip.split(":", 1)[1].strip()
 
-    # 2. Parse Kapasitas Komprehensif (SATA, NVMe Total, Namespace ADATA/Realtek)
+    # Parse Kapasitas (Mendukung SATA, NVMe Total, dan Namespace ADATA/Samsung/Realtek)
     line_lower = line_strip.lower()
     if any(
         k in line_lower
         for k in [
-            "user capacity:",
-            "total nvm capacity:",
-            "size/capacity:",
+            "capacity",
+            "size/capacity",
+            "user capacity",
             "namespace 1",
-            "capacity:",
+            "total nvm capacity",
         ]
     ):
-      # Ambil format label dalam kurung siku, misal: [512 GB] atau [1.00 TB]
       cap_bracket_match = re.search(
-          r"\[([\d.]+\s*[KMGT]B)\]", line_strip, re.IGNORECASE
+          r"\[\s*([\d.]+\s*[KMGT]B)\s*\]", line_strip, re.IGNORECASE
       )
       if cap_bracket_match:
         cap_bracket = cap_bracket_match.group(1).strip()
@@ -156,21 +155,20 @@ def parse_smartctl_output(text, device_name, hds_info=None):
         ):
           cap_bracket = raw_b.group(1).strip()
 
-      # Ambil angka kapasitas dalam bytes jika belum tercatat
       if capacity_bytes == 0:
-        clean_num_str = line_strip.split(":", 1)[-1]
-        nums = re.findall(r"[\d,]{7,}", clean_num_str)
+        val_part = line_strip.split(":", 1)[-1].replace(".", "")
+        nums = re.findall(r"[\d,]{7,}", val_part)
         if nums:
           try:
             capacity_bytes = int(nums[0].replace(",", ""))
           except Exception:
             pass
 
-    # 3. Parse Rotation Rate
+    # Rotation Rate
     if line_strip.startswith("Rotation Rate:"):
       rotation_rate = line_strip.split(":", 1)[1].strip()
 
-    # 4. Deteksi Protokol NVMe
+    # Deteksi NVMe
     if (
         "NVM Express" in line_strip
         or "Total NVM Capacity" in line_strip
@@ -178,7 +176,7 @@ def parse_smartctl_output(text, device_name, hds_info=None):
     ):
       is_nvme = True
 
-    # 5. Parse Status Kesehatan SMART
+    # Status SMART
     if "SMART overall-health self-assessment test result:" in line_strip:
       smart_status = line_strip.split(":", 1)[1].strip()
     elif "SMART overall-health self-assessment test result" in line_strip:
@@ -186,7 +184,7 @@ def parse_smartctl_output(text, device_name, hds_info=None):
       if parts:
         smart_status = parts[-1]
 
-    # 6. Parse Tabel Atribut SATA
+    # Atribut Tabel SATA
     match = re.match(r"^\s*(\d+)\s+([a-zA-Z0-9_-]+)\s+", line)
     if match:
       attr_id = int(match.group(1))
@@ -201,30 +199,29 @@ def parse_smartctl_output(text, device_name, hds_info=None):
         raw_val = int(nums[-1]) if nums else 0
       attributes[attr_id] = (attr_name, raw_val)
 
-  # =========================================================================
-  # Fallback Kapasitas via Kernel Linux Sysfs (/sys/block/<dev>/size)
-  # =========================================================================
+  # Fallback Kapasitas via Sysfs Kernel Linux (/sys/block/<dev>/size)
   if cap_bracket == "Unknown" or not cap_bracket:
-    if capacity_bytes == 0:
-      sys_size_path = f"/sys/block/{dev_base}/size"
-      if os.path.exists(sys_size_path):
-        try:
-          with open(sys_size_path, "r") as sf:
-            sectors = int(sf.read().strip())
-            capacity_bytes = sectors * 512
-        except Exception:
-          pass
-
-    if capacity_bytes > 0:
+    sys_size_file = f"/sys/block/{dev_base}/size"
+    if os.path.exists(sys_size_file):
+      try:
+        with open(sys_size_file, "r") as sf:
+          sectors = int(sf.read().strip())
+          total_bytes = sectors * 512
+          gb = total_bytes / (1000**3)
+          if gb >= 900:
+            cap_bracket = f"{gb / 1000.0:.2f} TB"
+          else:
+            cap_bracket = f"{int(round(gb))} GB"
+      except Exception:
+        pass
+    elif capacity_bytes > 0:
       gb = capacity_bytes / (1000**3)
       if gb >= 900:
         cap_bracket = f"{gb / 1000.0:.2f} TB"
       else:
         cap_bracket = f"{int(round(gb))} GB"
 
-  # =========================================================================
   # Klasifikasi Tipe Drive: NVMe vs SSD SATA vs HDD Mekanik
-  # =========================================================================
   model_upper = model.upper()
   rot_lower = rotation_rate.lower()
 
@@ -245,7 +242,7 @@ def parse_smartctl_output(text, device_name, hds_info=None):
       is_hdd = True
       is_ssd = False
 
-  # C. Heuristik Cadangan jika tipe drive SATA belum pasti
+  # C. Heuristik Cadangan jika belum terklasifikasi
   if not is_nvme and not is_ssd and not is_hdd:
     hdd_brands = [
         "WDC",
@@ -288,7 +285,7 @@ def parse_smartctl_output(text, device_name, hds_info=None):
 
   disk_type = "NVME" if is_nvme else ("HDD (Mekanik)" if is_hdd else "SSD Sata")
 
-  # Pembacaan Suhu
+  # Suhu & POH
   temp = 0
   if 194 in attributes:
     temp = attributes[194][1]
@@ -298,7 +295,6 @@ def parse_smartctl_output(text, device_name, hds_info=None):
     temp_match = re.search(r"Temperature:\s+(\d+)\s+Celsius", text, re.IGNORECASE)
     temp = int(temp_match.group(1)) if temp_match else 0
 
-  # Power On Hours
   poh = 0
   if 9 in attributes:
     poh = attributes[9][1]
@@ -399,7 +395,7 @@ def parse_smartctl_output(text, device_name, hds_info=None):
         f" | Write/Day: {write_day:.2f} GB"
     )
   else:
-    # Output HDD Mekanik
+    # HDD Mekanik
     reallocated = attributes.get(5)[1] if attributes.get(5) else 0
     pending = attributes.get(197)[1] if attributes.get(197) else 0
     rot_clean = (
@@ -447,7 +443,7 @@ def main():
     except Exception:
       pass
 
-  # 2. Pemindaian baru jika cache sudah kedaluwarsa
+  # 2. Eksekusi pemindaian jika cache sudah kedaluwarsa
   if not shutil.which("smartctl"):
     print('3 "Health_Storage" - UNKNOWN: smartctl tidak ditemukan.')
     return
@@ -467,7 +463,7 @@ def main():
     if "Device Model:" not in raw_out and "Model Number:" not in raw_out:
       continue
     try:
-      # Cocokkan nama dev persis atau base namespace NVMe (/dev/nvme0n1 -> /dev/nvme0)
+      # Tangani namespace NVMe (misal /dev/nvme0n1 dicocokkan juga dengan /dev/nvme0)
       hds_dev_info = hds_map.get(dev, None) or hds_map.get(
           re.sub(r"n\d+$", "", dev), None
       )
@@ -482,7 +478,7 @@ def main():
   output_text = "\n".join(results) + "\n"
   print(output_text, end="")
 
-  # 3. Simpan ke berkas cache
+  # 3. Tulis output ke cache
   os.makedirs(CACHE_DIR, exist_ok=True)
   try:
     with open(CACHE_FILE, "w") as f:
