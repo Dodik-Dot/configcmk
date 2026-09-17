@@ -93,9 +93,9 @@ Skrip pemantauan telah diselaraskan agar menghasilkan format keluaran visual yan
 
 - **Fungsi**: Memantau tingkat kesehatan (_SOH - State of Health_) baterai laptop, sisa daya, status pengisian, dan kapasitas desain.
 - **Linux Output**:
-  `0 "Health_Battery" -  Status Battery : Fully Charged ❘ Design Capacity : 35w/h ❘ Current Capacity : 10w/h ❘ Health : 28% ❘ Battery Level : 100%`
+  `0 "Health_Battery" -  Status Battery : Fully Charged | Design Capacity : 35w/h | Current Capacity : 10w/h | Health : 28% | Battery Level : 100%`
 - **Windows Output**:
-  `0 "Health_Battery" -  Status Battery : Fully Charged ❘ Design Capacity : 35w/h ❘ Current Capacity : 10w/h ❘ Health : 28% ❘ Battery Level : 100%`
+  `0 "Health_Battery" -  Status Battery : Fully Charged | Design Capacity : 35w/h | Current Capacity : 10w/h | Health : 28% | Battery Level : 100%`
 
 ### **2. cpu_info (.sh / .ps1)**
 
