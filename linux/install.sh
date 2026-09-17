@@ -17,6 +17,17 @@ AGENT_VERSION="2.4.0p35-1"
 GITHUB_REPO="Dodik-Dot/configcmk"
 GITHUB_BRANCH="main"
 
+# ==============================================================================
+# Membersihkan Config & Cache Lama
+# ==============================================================================
+echo "[INFO] Membersihkan skrip local checks dan cache lama..."
+rm -rf /usr/lib/check_mk_agent/local/*
+rm -rf /var/lib/check_mk_agent/cache/*
+
+# Pastikan folder target tetap ada setelah dibersihkan
+mkdir -p /usr/lib/check_mk_agent/local
+mkdir -p /var/lib/check_mk_agent/cache
+
 # Help message
 show_help() {
     echo "Penggunaan: sudo bash install.sh [OPSI]"
