@@ -123,16 +123,19 @@ if ($NeedUpdate) {
         )
         $InstalledApps = Get-ItemProperty $RegPaths -ErrorAction SilentlyContinue
 
+        # Daftar kata kunci yang WAJIB dibuang (Proofing tools, bahasa asing, add-in, update)
+        $ExcludePattern = "MUI|Proof|Filter|Tools|Component|Update|Pack|Telemetry|Teams|Licensing|Primary Interop|Visual Studio|Add-in|Language|Service Pack|Help|Outils|Herramientas|Correcci|Vérification|Verificacion"
+
         foreach ($app in $InstalledApps) {
             $dn = $app.DisplayName
             $dv = $app.DisplayVersion
             if (-not $dn) { continue }
 
-            # Filter spesifik untuk MS Office Suite DAN Standalone (Excel, Word, dll)
-            if ($dn -match "Microsoft (Office|Excel|Word|PowerPoint|Access|Outlook|Publisher|Visio|Project)" -and 
-                $dn -notmatch "MUI|Proof|Filter|Tools|Component|Update|Pack|Telemetry|Teams|Licensing|Primary Interop|Visual Studio|Add-in|Language|Service Pack|Help") {
+            # 1. Wajib diawali kata "Microsoft" (^Microsoft) agar paket bahasa asing otomatis gugur
+            if ($dn -match "^Microsoft\s+(Office|Excel|Word|PowerPoint|Access|Outlook|Publisher|Visio|Project)" -and 
+                $dn -notmatch $ExcludePattern) {
                 
-                # Bersihkan kode bahasa seperti " - en-us" atau " - id-id"
+                # Bersihkan kode bahasa di ujung nama jika ada (contoh: " - en-us")
                 $cleanName = ($dn -replace '\s*-\s*[a-z]{2}-[a-z]{2}$', '').Trim()
                 $itemWithVer = if ($dv) { "$cleanName (v$dv)" } else { $cleanName }
                 
@@ -142,11 +145,13 @@ if ($NeedUpdate) {
                 }
                 if (-not $exists) { $OfficeList.Add($itemWithVer) }
             }
-            elseif ($dn -match "LibreOffice") {
+            # 2. Deteksi LibreOffice
+            elseif ($dn -match "^LibreOffice") {
                 $lo = if ($dv) { "$dn $dv" } else { $dn }
                 if (-not ($OtherList | Where-Object { $_ -like "*LibreOffice*" })) { $OtherList.Add($lo.Trim()) }
             }
-            elseif ($dn -match "WPS Office") {
+            # 3. Deteksi WPS Office
+            elseif ($dn -match "WPS Office" -and $dn -notmatch $ExcludePattern) {
                 $wps = if ($dv) { "WPS Office v$dv" } else { "WPS Office" }
                 if (-not ($OtherList | Where-Object { $_ -like "*WPS Office*" })) { $OtherList.Add($wps.Trim()) }
             }
