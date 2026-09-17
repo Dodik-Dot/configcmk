@@ -109,9 +109,9 @@ Skrip pemantauan telah diselaraskan agar menghasilkan format keluaran visual yan
 
 - **Fungsi**: Mendeteksi kesehatan media penyimpanan (NVMe, SSD SATA, HDD) otomatis. SSD memantau wearout % dan TBW, HDD memantau bad sector (Reallocated/Pending Sectors) dan jam aktif kerja (POH). Bersih dari metrik sisa umur (_Est. Life_).
 - **SATA SSD Output (Identik)**:
-  `0 "Storage_Health_sda" - Status : OK ❘ Model: CS900 SSD 120GB (111.79 GB) ❘ Status: PASSED ❘ Temp: 26C ❘ Type: SSD Sata (111.79 GB) ❘ Health: 100% ❘ Read: 6.5 TB ❘ Written: 5.4 TB ❘ Write/Day: 108.64 GB`
+  `0 "Storage_Health_sda" - Status : OK | Model: CS900 SSD 120GB (111.79 GB) | Status: PASSED | Temp: 26C | Type: SSD Sata (111.79 GB) | Health: 100% | Read: 6.5 TB | Written: 5.4 TB | Write/Day: 108.64 GB`
 - **SATA HDD Output (Identik)**:
-  `0 "Storage_Health_sdb" - Status : OK ❘ Model: ST1000LM035 1TB (931.51 GB) ❘ Status: PASSED ❘ Temp: 31C ❘ Disk Type: HDD ❘ Reallocated Sectors: 0 ❘ Pending Sectors: 0 ❘ Power On Hours: 12345 Hrs ❘ Remark: Disk Condition Good`
+  `0 "Storage_Health_sdb" - Status : OK | Model: ST1000LM035 1TB (931.51 GB) | Status: PASSED | Temp: 31C | Disk Type: HDD | Reallocated Sectors: 0 | Pending Sectors: 0 | Power On Hours: 12345 Hrs | Remark: Disk Condition Good`
 
 ### **4. fan_health (.sh / .ps1)**
 
@@ -129,32 +129,32 @@ Skrip pemantauan telah diselaraskan agar menghasilkan format keluaran visual yan
 
 - **Fungsi**: Menyajikan rincian nama sistem operasi distribusi, versi kernel, status aktivasi lisensi OS, serta pendeteksian terintegrasi terhadap seluruh aplikasi office terpasang (LibreOffice, WPS, MS Office ClickToRun) beserta lisensinya.
 - **Output (Identik)**:
-  `0 "Info_OS" - OK - OS: Microsoft Windows 11 Pro | Kernel: 10.0.22631 | Arch: 64-bit | License: Activated (Licensed) ❘ Checked At: 2026-08-22 16:00:00`
-  `0 "Info_Office" - OK - Product: O365HomePremRetail (16.0.17830) | Status: Licensed (LICENSED (Key: ...-Y8R3) ❘ Checked At: 2026-08-22 16:00:00`
+  `0 "Info_OS" - OK - OS: Microsoft Windows 11 Pro | Kernel: 10.0.22631 | Arch: 64-bit | License: Activated (Licensed) | Checked At: 2026-08-22 16:00:00`
+  `0 "Info_Office" - OK - Product: O365HomePremRetail (16.0.17830) | Status: Licensed (LICENSED (Key: ...-Y8R3) | Checked At: 2026-08-22 16:00:00`
 
 ### **7. ram_health (.sh / .ps1)**
 
 - **Fungsi**: Membaca file log lokal hasil pengetesan integritas RAM asinkron oleh utilitas `memtester`/diagnostic Windows yang dipicu **Setiap Hari Sabtu pukul 11:00 AM** via Cron/Task Scheduler, serta mendeteksi sasis slot RAM fisik motherboard secara dinamis (Used/Empty Slots, Active Module Sizes).
 - **Output (Identik)**:
-  `0 "Health_RAM" - Status : OK ❘ Result: Passed ❘ Tested Size: 128M ❘ Last Test: 2026-08-22 11:50 ❘ Used Slots: 2/2 (0 Empty) ❘ Active Modules: [4GiB,4GiB] ❘ Log: Memory allocation and system diagnostics passed.`
+  `0 "Health_RAM" - Status : OK | Result: Passed | Tested Size: 128M | Last Test: 2026-08-22 11:50 | Used Slots: 2/2 (0 Empty) | Active Modules: [4GiB,4GiB] | Log: Memory allocation and system diagnostics passed.`
 
 ### **8. ram_usage (.sh / .ps1)**
 
 - **Fungsi**: Memantau kapasitas total, sisa ruang kosong, dan persentase penggunaan memori RAM fisik aktif.
 - **Output (Identik)**:
-  `0 "RAM_Usage" - Status : OK ❘ Used: 45% ❘ Used Space: 3.60 GB ❘ Free: 4.40 GB ❘ Total: 8.00 GB`
+  `0 "RAM_Usage" - Status : OK | Used: 45% | Used Space: 3.60 GB | Free: 4.40 GB | Total: 8.00 GB`
 
 ### **9. remote_apps (.sh / .ps1)**
 
 - **Fungsi**: Memindai file konfigurasi dan registry sistem untuk melacak AnyDesk ID dan RustDesk ID unik milik klien.
 - **Output (Identik)**:
-  `0 "Remote_Apps" - Status : OK ❘ AnyDesk ID: 123456789 ❘ RustDesk ID: 987654321`
+  `0 "Remote_Apps" - Status : OK | AnyDesk ID: 123456789 | RustDesk ID: 987654321`
 
 ### **10. storage_usage (.sh / .ps1)**
 
 - **Fungsi**: Memantau kapasitas seluruh partisi penyimpanan fisik yang terpasang (mounted) secara aman, mengabaikan partisi virtual, swap, maupun system reserved.
 - **Output (Identik)**:
-  `0 "Storage_Usage_C" - Status : OK ❘ Partition: C: (Local Disk) ❘ Used: 42% ❘ Free: 139.20 GB ❘ Total: 240.00 GB`
+  `0 "Storage_Usage_C" - Status : OK | Partition: C: (Local Disk) | Used: 42% | Free: 139.20 GB | Total: 240.00 GB`
 
 ---
 
