@@ -82,7 +82,7 @@ if ($NeedUpdate) {
         $OfficeList = [System.Collections.Generic.List[string]]::new()
         $OtherList  = [System.Collections.Generic.List[string]]::new()
 
-        # A. Deteksi Click-to-Run (C2R) Apps & Suites
+       # A. Deteksi Click-to-Run (C2R) Apps & Suites
         $CtrPath = "HKLM:\Software\Microsoft\Office\ClickToRun\Configuration"
         if (Test-Path $CtrPath) {
             $ReleaseIDs = Get-ItemPropertyValue -Path $CtrPath -Name "ProductReleaseIDs" -ErrorAction SilentlyContinue
@@ -92,22 +92,21 @@ if ($NeedUpdate) {
                 foreach ($item in $c2rItems) {
                     $cleanItem = $item.Trim()
                     $label = switch -Wildcard ($cleanItem) {
-                        "*O365*"         { "Microsoft 365" }
-                        "*ProPlus2024*"  { "Office Pro Plus 2024" }
-                        "*ProPlus2021*"  { "Office Pro Plus 2021" }
-                        "*ProPlus2019*"  { "Office Pro Plus 2019" }
-                        "*ProPlus2016*"  { "Office Pro Plus 2016" }
-                        "*Standard2016*" { "Office Standard 2016" }
-                        "*Excel2016*"    { "Microsoft Excel 2016" }
-                        "*Excel2019*"    { "Microsoft Excel 2019" }
-                        "*Excel2021*"    { "Microsoft Excel 2021" }
-                        "*Excel*"        { "Microsoft Excel (Standalone)" }
-                        "*Word*"         { "Microsoft Word (Standalone)" }
-                        "*Access*"       { "Microsoft Access (Standalone)" }
-                        "*PowerPoint*"   { "Microsoft PowerPoint (Standalone)" }
-                        "*Visio*"        { "Microsoft Visio" }
-                        "*Project*"      { "Microsoft Project" }
-                        default          { $cleanItem }
+                        "*O365*"                                { "Microsoft 365" }
+                        "*ProPlus2024*"                         { "Office Pro Plus 2024" }
+                        "*ProPlus2021*"                         { "Office Pro Plus 2021" }
+                        "*ProPlus2019*"                         { "Office Pro Plus 2019" }
+                        "*ProPlus2016*"                         { "Office Pro Plus 2016" }
+                        "*Excel2024*"                           { "Microsoft Excel 2024 LTSC" }
+                        "*ExcelLTSC*"                           { "Microsoft Excel 2024 LTSC" }
+                        "*Excel2021*"                           { "Microsoft Excel 2021" }
+                        "*Excel2019*"                           { "Microsoft Excel 2019" }
+                        "*Excel2016*"                           { "Microsoft Excel 2016" }
+                        "*Excel*"                               { "Microsoft Excel 2024 LTSC" }
+                        "*Word*"                                { "Microsoft Word (Standalone)" }
+                        "*Visio*"                               { "Microsoft Visio" }
+                        "*Project*"                             { "Microsoft Project" }
+                        default                                 { $cleanItem }
                     }
                     $c2rTag = if ($VerReport) { "$label (v$VerReport)" } else { $label }
                     if (-not $OfficeList.Contains($c2rTag)) { $OfficeList.Add($c2rTag) }
@@ -115,7 +114,7 @@ if ($NeedUpdate) {
             }
         }
 
-        # B. Pindai Registry Uninstall (MSI & Standalone Apps)
+        # B. Pindai Registry Uninstall (MSI & Alternatif) + Anti-Duplikasi
         $RegPaths = @(
             "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
             "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -133,11 +132,16 @@ if ($NeedUpdate) {
                 $dn -notmatch $ExcludePattern) {
                 
                 $cleanName = ($dn -replace '\s*-\s*[a-z]{2}-[a-z]{2}$', '').Trim()
+                if ($cleanName -match "Excel LTSC") { $cleanName = "Microsoft Excel 2024 LTSC" }
                 $itemWithVer = if ($dv) { "$cleanName (v$dv)" } else { $cleanName }
                 
+                # Cegah duplikasi jika sudah terdeteksi di langkah Click-to-Run
                 $exists = $false
                 foreach ($known in $OfficeList) {
-                    if ($known -like "*$cleanName*") { $exists = $true; break }
+                    if ($known -like "*$cleanName*" -or ($known -like "*Excel*" -and $cleanName -like "*Excel*")) { 
+                        $exists = $true
+                        break 
+                    }
                 }
                 if (-not $exists) { $OfficeList.Add($itemWithVer) }
             }
@@ -150,7 +154,7 @@ if ($NeedUpdate) {
                 if (-not ($OtherList | Where-Object { $_ -like "*WPS Office*" })) { $OtherList.Add($wps.Trim()) }
             }
         }
-
+        
         # C. Pindai Lisensi OSPP.VBS (Diurutkan dari Office 2010 -> 2013 -> 2016/C2R)
         $AllLicenses = [System.Collections.Generic.List[string]]::new()
         $VbsSearchPaths = @(
