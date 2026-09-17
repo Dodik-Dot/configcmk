@@ -24,7 +24,6 @@ if (Test-Path $CacheFile) {
 if ($NeedUpdate) {
     if (Test-Path $CacheFile) { Remove-Item $CacheFile -Force }
 
-    # Cari binary smartctl.exe
     $SmartctlBin = "C:\Program Files\smartmontools\bin\smartctl.exe"
     if (-not (Test-Path $SmartctlBin)) {
         $CmdCheck = Get-Command smartctl.exe -ErrorAction SilentlyContinue
@@ -50,7 +49,7 @@ if ($NeedUpdate) {
             $DiskType = if ($IsNVMe) { "NVME" } elseif ($IsHDD) { "HDD" } else { "SSD Sata" }
 
             # =========================================================
-            # LANGKAH 1: Ambil Nilai Baseline dari WMI Windows
+            # LANGKAH 1: Ambil Baseline dari WMI (Pasti Berhasil di PNY)
             # =========================================================
             $Health      = 100
             $Temp        = 35
@@ -61,7 +60,6 @@ if ($NeedUpdate) {
             $Reallocated = 0
             $Pending     = 0
 
-            # Normalisasi status kesehatan bawaan Windows (Cegah nilai '0')
             $HealthEnum = [string]$Disk.HealthStatus
             if ($HealthEnum -match "Unhealthy|2") {
                 $SmartStatus = "FAILED"
@@ -71,7 +69,6 @@ if ($NeedUpdate) {
                 $SmartStatus = "PASSED"
             }
 
-            # Ekstrak data reliabilitas WMI
             $Reliability = $Disk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
             if ($Reliability) {
                 if ($Reliability.Temperature -and $Reliability.Temperature -gt 0) {
@@ -92,24 +89,20 @@ if ($NeedUpdate) {
             }
 
             # =========================================================
-            # LANGKAH 2: Perkaya / Tambal Data Menggunakan smartctl.exe
+            # LANGKAH 2: Overlay smartctl (Hanya Timpa Jika Bernilai Valid)
             # =========================================================
             if ($SmartctlBin -and (Test-Path $SmartctlBin)) {
                 $DevPath = "/dev/pd$DeviceID"
-                
-                # Coba pembacaan autodetect, jika NVMe fallback ke flag spesifik
                 $SmartRaw = & $SmartctlBin -a $DevPath 2>$null
                 if ($IsNVMe -and (-not ($SmartRaw -match "Data Units Written|Percentage Used"))) {
                     $SmartRaw = & $SmartctlBin -a $DevPath -d nvme 2>$null
                 }
 
-                # Tangkap status kesehatan dari smartctl jika tersedia
                 if ($SmartRaw -match "SMART overall-health self-assessment test result:\s*([a-zA-Z]+)") {
                     $SmartStatus = $Matches[1].Trim()
                 }
 
                 if ($IsHDD) {
-                    # Parsing atribut fisik HDD Mekanik
                     foreach ($line in $SmartRaw) {
                         if ($line -match "^\s*5\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\d+)") { $Reallocated = [int]$Matches[1] }
                         if ($line -match "^\s*9\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\d+)") { $Poh = [int]$Matches[1] }
@@ -117,7 +110,6 @@ if ($NeedUpdate) {
                         if ($line -match "^\s*197\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\d+)") { $Pending = [int]$Matches[1] }
                     }
                 } else {
-                    # NVMe & SATA SSD: Hanya timpa jika smartctl memberikan nilai riil
                     if ($SmartRaw -match "Percentage Used:\s+(\d+)") {
                         $Health = [Math]::Max(0, (100 - [int]$Matches[1]))
                     }
@@ -129,21 +121,15 @@ if ($NeedUpdate) {
                     }
                     if ($SmartRaw -match "Data Units Written:\s+[\d,]+\s+\[([\d.]+)\s+TB\]") {
                         $WriteTB = [double]$Matches[1]
-                    } elseif ($SmartRaw -match "Data Units Written:\s+([\d,]+)") {
-                        $rawW = [double]($Matches[1] -replace ',', '')
-                        if ($rawW -gt 0) { $WriteTB = [Math]::Round(($rawW * 512000) / 1TB, 2) }
                     }
                     if ($SmartRaw -match "Data Units Read:\s+[\d,]+\s+\[([\d.]+)\s+TB\]") {
                         $ReadTB = [double]$Matches[1]
-                    } elseif ($SmartRaw -match "Data Units Read:\s+([\d,]+)") {
-                        $rawR = [double]($Matches[1] -replace ',', '')
-                        if ($rawR -gt 0) { $ReadTB = [Math]::Round(($rawR * 512000) / 1TB, 2) }
                     }
                 }
             }
 
             # =========================================================
-            # LANGKAH 3: Kalkulasi Metrik & Status Checkmk
+            # LANGKAH 3: Format Baris Output Checkmk
             # =========================================================
             $WriteDay = "N/A"
             if ($DiskType -ne "HDD" -and $Poh -gt 0 -and $WriteTB -gt 0) {
@@ -156,10 +142,8 @@ if ($NeedUpdate) {
                 }
             }
 
-            # Evaluasi Threshold Status Checkmk
             $StatusVal  = 0
             $StatusText = "OK"
-
             if ($SmartStatus -eq "FAILED" -or ($DiskType -ne "HDD" -and $Health -le 70) -or ($IsHDD -and ($Reallocated -gt 50 -or $Pending -gt 10))) {
                 $StatusVal  = 2
                 $StatusText = "CRITICAL"
@@ -171,7 +155,6 @@ if ($NeedUpdate) {
             $CleanModel  = $Model -replace '[^\w\s-]', ''
             $ServiceName = "Storage_Health_$CleanModel"
 
-            # Susun baris keluaran Checkmk
             if ($DiskType -eq "HDD") {
                 $Remark = if ($Reallocated -eq 0 -and $Pending -eq 0) { "Kondisi Sehat (0 Bad Sector)" } else { "Waspada: $Reallocated Bad Sector / $Pending Pending" }
                 $OutputLine = "$StatusVal `"$ServiceName`" - Status : $StatusText | Model: $Model ($($SizeGB) GB) | Status: $SmartStatus | Temp: $($Temp)C | Disk Type: HDD | Reallocated Sectors: $Reallocated | Pending Sectors: $Pending | Power On Hours: $Poh Jam | Remark: $Remark"
@@ -184,5 +167,4 @@ if ($NeedUpdate) {
     }
 }
 
-# Tampilkan isi cache
 Get-Content $CacheFile -ErrorAction SilentlyContinue
