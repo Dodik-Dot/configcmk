@@ -28,7 +28,7 @@ if ($NeedUpdate) {
     $Lines = [System.Collections.Generic.List[string]]::new()
     
     # =================================================================
-    # 1. PENGECEKAN WINDOWS OS (Info_Windows)
+    # 1. PENGECEKAN WINDOWS OS (Info_OS)
     # =================================================================
     try {
         $OS = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
@@ -70,7 +70,7 @@ if ($NeedUpdate) {
             $WinCheckStatus = 2; $WinState = "CRITICAL" 
         }
 
-        $Lines.Add("$WinCheckStatus `"Info_Windows`" - $WinState - OS: $WinName | Version: $WinVersionName | Arch: $WinArch | Build: $WinBuild | License: $WinStatus | Key: $WinKey")
+        $Lines.Add("$WinCheckStatus `"Info_OS`" - $WinState - OS: $WinName | Version: $WinVersionName | Arch: $WinArch | Build: $WinBuild | License: $WinStatus | Key: $WinKey")
     } catch {
         $Lines.Add("0 `"Info_Windows`" - OK - OS: Microsoft Windows | Status: Error querying WMI")
     }
