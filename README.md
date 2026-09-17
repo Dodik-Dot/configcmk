@@ -56,6 +56,10 @@ Jika ingin meremove semua config yang pernah ada :
 ```bash
 sudo rm -rf /usr/lib/check_mk_agent/local/* /var/lib/check_mk_agent/cache/* && curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | sudo bash
 ```
+Jika ingin meremove semua config yang pernah ada dan langsung ke SERVER KEDIRI:
+```bash
+sudo rm -rf /usr/lib/check_mk_agent/local/* /var/lib/check_mk_agent/cache/* && curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | sudo bash -s -- -s 192.168.55.112:8081 -i cmk -v 2.4.0p35-1
+```
 
 ### **B. Windows Host (Windows 10, 11, Server)**
 
