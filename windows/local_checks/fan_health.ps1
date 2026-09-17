@@ -1,81 +1,72 @@
 # =====================================================================
 # Local Check Checkmk: Real-Time Fan Health & Speed (Windows)
-# Supports LibreHardwareMonitorLib.dll, WMI root\LibreHardwareMonitor, and CIM Win32_Fan
 # =====================================================================
 
-$LibDir = "C:\ProgramData\checkmk\agent\lib"
-$DllPath = Join-Path $LibDir "LibreHardwareMonitorLib.dll"
-if (-not (Test-Path $DllPath)) {
-    $DllPath = "C:\ProgramData\checkmk\agent\local\LibreHardwareMonitorLib.dll"
-}
+ = "C:\ProgramData\checkmkgent\lib\LibreHardwareMonitorLib.dll"
+ = 
+ = 
 
-$fanSpeed = 0
-$fanFound = $false
-$sensorName = ""
-
-# 1. Direct .NET Assembly Load via LibreHardwareMonitorLib.dll
-if (Test-Path $DllPath) {
+# 1. Coba baca via LibreHardwareMonitorLib.dll (.NET Assembly)
+if (Test-Path ) {
     try {
-        Add-Type -Path $DllPath -ErrorAction Stop
-        $computer = New-Object LibreHardwareMonitor.Hardware.Computer
-        $computer.IsCpuEnabled = $true
-        $computer.IsMotherboardEnabled = $true
-        $computer.IsControllerEnabled = $true
-        $computer.Open()
-
-        foreach ($hardware in $computer.Hardware) {
-            $hardware.Update()
-            foreach ($subHW in $hardware.SubHardware) { $subHW.Update() }
-            foreach ($sensor in $hardware.Sensors) {
-                if ($sensor.SensorType -eq "Fan" -and $sensor.Value -gt 0) {
-                    $fanSpeed = [int]$sensor.Value
-                    $sensorName = $sensor.Name
-                    $fanFound = $true
+        Add-Type -Path  -ErrorAction Stop
+        
+         = New-Object LibreHardwareMonitor.Hardware.Computer
+        .IsCpuEnabled = 
+        .IsMotherboardEnabled = 
+        .IsControllerEnabled = 
+        .Open()
+        
+        foreach ( in .Hardware) {
+            .Update()
+            foreach ( in .SubHardware) {
+                .Update()
+            }
+            foreach ( in .Sensors) {
+                if (.SensorType -eq "Fan" -and .Value -gt 0) {
+                     = [int].Value
+                     = .Name
                     break
                 }
             }
-            if ($fanFound) { break }
+            if () { break }
         }
-        $computer.Close()
+        .Close()
     } catch {
-        # Fallback if DLL loading fails
+        # Silent fallback
     }
 }
 
-# 2. WMI Query to root\LibreHardwareMonitor (if LHM App/Service is running)
-if (-not $fanFound) {
-    $fanLHM = Get-CimInstance -Namespace "root\LibreHardwareMonitor" -ClassName "Sensor" -ErrorAction SilentlyContinue |
-              Where-Object { $_.SensorType -eq "Fan" -and $_.Value -gt 0 } | Select-Object -First 1
-    if ($fanLHM) {
-        $fanSpeed = [int]$fanLHM.Value
-        $sensorName = $fanLHM.Name
-        $fanFound = $true
+# 2. Jika DLL gagal/kosong, coba baca via WMI Namespace LibreHardwareMonitor
+if (-not ) {
+     = Get-CimInstance -Namespace "root\LibreHardwareMonitor" -ClassName "Sensor" -ErrorAction SilentlyContinue | 
+              Where-Object { .SensorType -eq "Fan" -and .Value -gt 0 } | Select-Object -First 1
+    if () {
+         = [int].Value
+         = .Name
     }
 }
 
-# 3. Standard CIM Win32_Fan
-if (-not $fanFound) {
-    $Fans = Get-CimInstance -ClassName Win32_Fan -ErrorAction SilentlyContinue |
-            Where-Object { $_.DesiredSpeed -gt 0 } | Select-Object -First 1
-    if ($Fans) {
-        $fanSpeed = [int]$Fans.DesiredSpeed
-        $sensorName = $Fans.Name
-        $fanFound = $true
+# 3. Jika masih kosong, coba baca via CIM Win32_Fan standar
+if (-not ) {
+     = Get-CimInstance -ClassName Win32_Fan -ErrorAction SilentlyContinue | 
+                Where-Object { .DesiredSpeed -gt 0 } | Select-Object -First 1
+    if () {
+         = [int].DesiredSpeed
+         = "System Fan"
     }
 }
 
-# Decision & Thresholds (Standard: > 1600 RPM OK, < 1600 RPM Warning, 0 RPM Passive/OK)
-if ($fanFound) {
-    $status = 0
-    $statusTxt = "OK"
-    if ($fanSpeed -lt 1600 -and $fanSpeed -gt 0) {
-        $status = 1
-        $statusTxt = "Warning"
-    }
-    $Output = "$status `"FAN_Health`" - Status : $statusTxt ~ FAN Speed : ${fanSpeed}rpm ~ Sensor: $sensorName ~ Remark: FAN Condition Good"
+# 4. Format Output Checkmk menggunakan pemisah "|"
+if ( -and  -gt 0) {
+    # Ambang batas Checkmk (Standar): >1600 RPM = OK, <1600 RPM = Warning
+     = 0
+    if ( -lt 1600) {  = 1 }
+    
+     = " " - Status : OK | FAN Speed : rpm | Sensor:  | Remark: FAN Condition Good"
 } else {
-    # Passive Cooling / Sensor Not Exposed (OK - Status 0 per Checkmk Standard)
-    $Output = "0 `"FAN_Health`" - Status : OK ~ FAN Speed : 0rpm ~ Remark: Passive Cooling or Sensor Not Exposed"
+    # Fallback jika hardware/laptop tidak mengekspos sensor RPM (Passive Cooling / WMI unavailable)
+     = "0 " - Status : OK | FAN Speed : 0rpm | Remark: Passive Cooling or Sensor Not Exposed"
 }
 
-Write-Output $Output
+Write-Output 
