@@ -13,8 +13,8 @@ fi
 # Default variables
 SERVER_IP=""
 SITE_ID="cmk"
-AGENT_VERSION="2.5.0p9-1"
-GITHUB_REPO="andin1st/scriptcmk"
+AGENT_VERSION="2.4.0p35-1"
+GITHUB_REPO="Dodik-Dot/configcmk"
 GITHUB_BRANCH="main"
 
 # Help message
