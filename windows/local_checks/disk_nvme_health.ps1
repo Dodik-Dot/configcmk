@@ -6,7 +6,7 @@ $CacheDir = "$env:ProgramData\checkmk\agent\cache"
 if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force $CacheDir | Out-Null }
 $CacheFile = Join-Path $CacheDir "cache_disk_health.txt"
 
-# Get current hour and today's 16:00 threshold
+# Logika Penjadwalan Cache Harian Pukul 16:00
 $Now = Get-Date
 $Today16 = Get-Date -Hour 16 -Minute 0 -Second 0
 if ($Now -lt $Today16) {
@@ -26,7 +26,7 @@ if (Test-Path $CacheFile) {
 if ($NeedUpdate) {
     if (Test-Path $CacheFile) { Remove-Item $CacheFile -Force }
     
-    # Get Physical Disks via CIM (Storage Namespace)
+    # Ambil Physical Disks via CIM
     $Disks = Get-PhysicalDisk -ErrorAction SilentlyContinue
     
     if (-not $Disks) {
@@ -36,13 +36,50 @@ if ($NeedUpdate) {
             $DeviceID = $Disk.DeviceID
             $Model = $Disk.FriendlyName.Trim()
             $SizeGB = [Math]::Round($Disk.Size / 1GB, 2)
-            $MediaType = $Disk.MediaType # SSD or HDD
+            $RawMediaType = $Disk.MediaType
+            $Spindle = $Disk.SpindleSpeed
             
-            # Query Storage Reliability Counter for Wear, Temperature and POH
+            # =================================================================
+            # 1. Klasifikasi Tipe Drive Berlapis (Fix HDD Terbaca SSD Sata)
+            # =================================================================
+            $IsNVMe = $false
+            $IsHDD  = $false
+            $IsSSD  = $false
+
+            if ($Disk.BusType -eq "NVMe" -or $Model -match "NVMe") {
+                $IsNVMe = $true
+            } else {
+                # A. Cek RPM Piringan (SpindleSpeed > 0 menandakan HDD)
+                if ($Spindle -and $Spindle -gt 0 -and $Spindle -lt 25000) {
+                    $IsHDD = $true
+                }
+                # B. Cek String Model Khas HDD Mekanik
+                elseif ($Model -match 'WDC|WD\d{2,4}|ST\d{2,4}|BARRACUDA|TOSHIBA\s*DT|HITACHI|HGST|DESKSTAR' -and $Model -notmatch 'SSD') {
+                    $IsHDD = $true
+                }
+                # C. Cek MediaType bawaan
+                elseif ($RawMediaType -eq "HDD") {
+                    $IsHDD = $true
+                }
+                # D. Cek jika eksplisit SSD
+                elseif ($RawMediaType -eq "SSD" -or $Model -match 'SSD|Solid State') {
+                    $IsSSD = $true
+                }
+                # E. Fallback jika masih Unspecified
+                else {
+                    $IsHDD = $true
+                }
+            }
+
+            $DiskType = if ($IsNVMe) { "NVME" } elseif ($IsHDD) { "HDD" } else { "SSD Sata" }
+
+            # =================================================================
+            # 2. Query Storage Reliability Counter
+            # =================================================================
             $Reliability = $Disk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
             
-            $Temp = 35 # Fallback Temp
-            if ($Reliability -and $Reliability.Temperature -ne $null) {
+            $Temp = 35 # Default Fallback Temp
+            if ($Reliability -and $Reliability.Temperature -ne $null -and $Reliability.Temperature -gt 0) {
                 $Temp = $Reliability.Temperature
             }
             
@@ -64,25 +101,17 @@ if ($NeedUpdate) {
             $Health = 100 - $Wear
             if ($Health -lt 0) { $Health = 0 }
             
-            # Formulate Disk Type display
-            $DiskType = "SSD Sata"
-            if ($Disk.BusType -eq "NVMe") {
-                $DiskType = "NVME"
-            } elseif ($MediaType -eq "HDD") {
-                $DiskType = "HDD"
-            }
-            
-            # Reads & Writes estimation in TB
+            # Reads & Writes estimation in TB (Hanya untuk SSD/NVMe)
             $ReadTB = 0.0
             $WriteTB = 0.0
             if ($Reliability) {
-                if ($Reliability.ReadBytesTotal) { $ReadTB = [Math]::Round($Reliability.ReadBytesTotal / 1TB, 1) }
-                if ($Reliability.WriteBytesTotal) { $WriteTB = [Math]::Round($Reliability.WriteBytesTotal / 1TB, 1) }
+                if ($Reliability.ReadBytesTotal) { $ReadTB = [Math]::Round($Reliability.ReadBytesTotal / 1TB, 2) }
+                if ($Reliability.WriteBytesTotal) { $WriteTB = [Math]::Round($Reliability.WriteBytesTotal / 1TB, 2) }
             }
             
-            # Calculate Write/Day
+            # Hitung Write/Day untuk Media Flash
             $WriteDay = "N/A"
-            if ($MediaType -ne "HDD" -and $Poh -gt 0 -and $WriteTB -gt 0) {
+            if ($DiskType -ne "HDD" -and $Poh -gt 0 -and $WriteTB -gt 0) {
                 $Days = $Poh / 24
                 if ($Days -gt 0.05) {
                     $WriteDayVal = ($WriteTB * 1000) / $Days
@@ -92,26 +121,31 @@ if ($NeedUpdate) {
                 }
             }
             
-            # Determine Checkmk Status (OK > 90%, Warn <= 90%, Crit <= 80%)
+            # =================================================================
+            # 3. Penentuan Status Checkmk
+            # =================================================================
             $StatusVal = 0
             $StatusText = "OK"
-            if ($SmartStatus -eq "FAILED" -or ($MediaType -ne "HDD" -and $Health -le 80)) {
+            if ($SmartStatus -eq "FAILED" -or ($DiskType -ne "HDD" -and $Health -le 80)) {
                 $StatusVal = 2
                 $StatusText = "Critical"
-            } elseif ($MediaType -ne "HDD" -and $Health -le 90) {
+            } elseif ($DiskType -ne "HDD" -and $Health -le 90) {
                 $StatusVal = 1
                 $StatusText = "Warning"
             }
             
-            # Clean model name for service name
+            # Bersihkan nama model untuk identifier service Checkmk
             $CleanModel = $Model -replace '[^\w\s-]', ''
             $ServiceName = "Storage_Health_$CleanModel"
             
-            if ($MediaType -eq "HDD") {
-                # HDD Status Output
+            # =================================================================
+            # 4. Format Baris Output Checkmk
+            # =================================================================
+            if ($DiskType -eq "HDD") {
+                # Format khusus HDD Mekanik
                 $OutputLine = "$StatusVal `"$ServiceName`" - Status : $StatusText | Model: $Model ($($SizeGB) GB) | Status: $SmartStatus | Temp: $($Temp)C | Disk Type: HDD | Reallocated Sectors: 0 | Pending Sectors: 0 | Power On Hours: $Poh Hrs | Remark: Disk Condition Good"
             } else {
-                # SSD/NVMe Status Output
+                # Format khusus SSD / NVMe
                 $ReadStr = "$($ReadTB) TB"
                 $WriteStr = "$($WriteTB) TB"
                 $OutputLine = "$StatusVal `"$ServiceName`" - Status : $StatusText | Model: $Model ($($SizeGB) GB) | Status: $SmartStatus | Temp: $($Temp)C | Type: $DiskType ($($SizeGB) GB) | Health: $($Health)% | Read: $ReadStr | Written: $WriteStr | Write/Day: $WriteDay"
