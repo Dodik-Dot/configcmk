@@ -1,6 +1,6 @@
 # Checkmk Client Monitoring Agent Script Suite
 
-Sistem pemantauan agen kustom **Checkmk** berbasis skrip otomatis untuk melakukan pengawasan terstandarisasi pada seluruh host client **Linux** dan **Windows**. Seluruh konfigurasi, skrip monitoring (_local checks_), dan installer otomatis dikelola secara terpusat pada repositori GitHub resmi **`Dodik-Dot/configcmk`**.
+Sistem pemantauan agen kustom **Checkmk** berbasis skrip otomatis untuk melakukan pengawasan terstandarisasi pada seluruh host client **Linux** dan **Windows**. Seluruh konfigurasi, skrip monitoring (_local checks_), dan installer otomatis dikelola secara terpusat pada repositori GitHub resmi **`Dodik-Dot/configcmk`**. #kredit untuk mas Aziz yang sudah susah payah bikin **`andin1st/scriptcmk/`**
 
 Dengan arsitektur ini, baik server Linux maupun Windows klien akan memancarkan matriks serta visualisasi pemantauan yang **identik dan terstandarisasi** ke server pusat Checkmk.
 
