@@ -2,6 +2,7 @@
 # =============================================================================
 # Checkmk Agent Bootstrap Installer - Unified Multi-Distro Edition
 # Supports: Debian/Ubuntu (.deb) and Fedora/RHEL/Alma/Rocky (.rpm)
+# Includes: smartmontools & HDSentinel CLI Auto-Installer
 # =============================================================================
 
 # Ensure script is run as root
@@ -35,7 +36,7 @@ show_help() {
     echo "OPSI:"
     echo "  -s, --server IP/HOST      IP atau Hostname server Checkmk"
     echo "  -d, --site SITE_ID        Site ID Checkmk (Default: cmk)"
-    echo "  -v, --version VERSION     Versi Agen Checkmk (Default: 2.5.0p9-1)"
+    echo "  -v, --version VERSION     Versi Agen Checkmk (Default: 2.4.0p35-1)"
     echo "  -g, --github REPO         Repositori GitHub kustom (Format: user/repo)"
     echo "  -b, --branch BRANCH       Branch GitHub (Default: main)"
     echo "  -h, --help                Tampilkan bantuan"
@@ -58,7 +59,6 @@ done
 # Interactive Mode if parameters are missing
 if [ -z "$SERVER_IP" ]; then
     echo -e "\e[34m=== Konfigurasi Server Checkmk ===\e[0m"
-    # Menggunakan < /dev/tty untuk mengatasi bug stdin pada curl | bash
     read -p "Masukkan IP Address atau Hostname Server Checkmk: " SERVER_IP < /dev/tty
     
     if [ -z "$SERVER_IP" ]; then
@@ -93,20 +93,55 @@ fi
 
 echo -e "\e[32m[INFO] Mendeteksi Sistem Operasi: $OS_TYPE ($PKG_MANAGER)\e[0m"
 
-# Install Dependencies
-echo -e "\e[32m[INFO] Menginstal dependensi sistem...\e[0m"
+# Install System Dependencies (Termasuk smartmontools & gzip)
+echo -e "\e[32m[INFO] Menginstal dependensi sistem & smartmontools...\e[0m"
 if [ "$OS_TYPE" = "debian" ]; then
     apt-get update -y
-    apt-get install -y curl smartmontools memtester lm-sensors jq upower bc
+    apt-get install -y curl smartmontools memtester lm-sensors jq upower bc gzip tar
 elif [ "$OS_TYPE" = "redhat" ]; then
-    # Di RHEL/CentOS/Fedora, epel-release mungkin diperlukan untuk memtester
     if [ "$PKG_MANAGER" = "dnf" ]; then
         dnf install -y epel-release 2>/dev/null || true
-        dnf install -y curl smartmontools memtester lm_sensors jq upower bc
+        dnf install -y curl smartmontools memtester lm_sensors jq upower bc gzip tar
     else
         yum install -y epel-release 2>/dev/null || true
-        yum install -y curl smartmontools memtester lm_sensors jq upower bc
+        yum install -y curl smartmontools memtester lm_sensors jq upower bc gzip tar
     fi
+fi
+
+# ==============================================================================
+# Install / Setup Hard Disk Sentinel (HDSentinel CLI Linux)
+# ==============================================================================
+echo -e "\e[32m[INFO] Memeriksa instalasi Hard Disk Sentinel (HDSentinel)...\e[0m"
+if ! command -v hdsentinel >/dev/null 2>&1 && [ ! -f /usr/local/bin/hdsentinel ]; then
+    ARCH=$(uname -m)
+    HDS_URL=""
+
+    case "$ARCH" in
+        x86_64|amd64)
+            HDS_URL="https://www.hdsentinel.com/hdslin/hdsentinel-019c-x64.gz"
+            ;;
+        i*86)
+            HDS_URL="https://www.hdsentinel.com/hdslin/hdsentinel-019c.gz"
+            ;;
+        aarch64|arm64)
+            HDS_URL="https://www.hdsentinel.com/hdslin/hdsentinel-armv8.gz"
+            ;;
+        armv7*|armhf)
+            HDS_URL="https://www.hdsentinel.com/hdslin/hdsentinel-armv7.gz"
+            ;;
+    esac
+
+    if [ -n "$HDS_URL" ]; then
+        echo "[INFO] Mengunduh HDSentinel ($ARCH) dari official server..."
+        if curl -sSfL "$HDS_URL" | gunzip -c > /usr/local/bin/hdsentinel 2>/dev/null; then
+            chmod +x /usr/local/bin/hdsentinel
+            echo -e "\e[32m[SUCCESS] HDSentinel berhasil dipasang di /usr/local/bin/hdsentinel\e[0m"
+        else
+            echo -e "\e[33m[WARNING] Gagal mengunduh HDSentinel otomatis. Script akan menggunakan smartctl murni.\e[0m"
+        fi
+    fi
+else
+    echo -e "\e[32m[INFO] HDSentinel sudah terpasang di sistem.\e[0m"
 fi
 
 # Download & Install Checkmk Agent
@@ -119,17 +154,15 @@ if [ "$OS_TYPE" = "debian" ]; then
     LOCAL_PATH="${TEMP_DIR}/${AGENT_FILE}"
     
     echo "Mengunduh: ${DOWNLOAD_URL}"
-    # Menggunakan -f untuk menggagalkan download jika 404
     if curl -sSfL -o "${LOCAL_PATH}" "${DOWNLOAD_URL}"; then
         echo -e "\e[32m[INFO] Menginstal Agen Checkmk (.deb)...\e[0m"
         dpkg -i "${LOCAL_PATH}" || apt-get install -f -y
         rm -f "${LOCAL_PATH}"
     else
-        echo -e "\e[31m[ERROR] Gagal mengunduh file agen .deb. Silakan periksa kembali IP Server, Site ID, atau versi agen.\e[0m"
+        echo -e "\e[31m[ERROR] Gagal mengunduh file agen .deb. Silakan periksa IP Server, Site ID, atau versi agen.\e[0m"
         exit 1
     fi
 elif [ "$OS_TYPE" = "redhat" ]; then
-    # Format RPM biasanya: check-mk-agent-2.5.0p9-1.noarch.rpm
     AGENT_FILE="check-mk-agent-${AGENT_VERSION}.noarch.rpm"
     DOWNLOAD_URL="http://${SERVER_IP}/${SITE_ID}/check_mk/agents/${AGENT_FILE}"
     LOCAL_PATH="${TEMP_DIR}/${AGENT_FILE}"
@@ -144,7 +177,7 @@ elif [ "$OS_TYPE" = "redhat" ]; then
         fi
         rm -f "${LOCAL_PATH}"
     else
-        echo -e "\e[31m[ERROR] Gagal mengunduh file agen .rpm. Silakan periksa kembali IP Server, Site ID, atau versi agen.\e[0m"
+        echo -e "\e[31m[ERROR] Gagal mengunduh file agen .rpm. Silakan periksa IP Server, Site ID, atau versi agen.\e[0m"
         exit 1
     fi
 fi
@@ -154,7 +187,7 @@ LOCAL_CHECKS_DIR="/usr/lib/check_mk_agent/local"
 mkdir -p "${LOCAL_CHECKS_DIR}"
 chmod 755 "${LOCAL_CHECKS_DIR}"
 
-# Membersihkan cache lama agar script baru langsung dieksekusi segar
+# Membersihkan cache lama
 echo -e "\e[32m[INFO] Membersihkan file cache lama agar seluruh script kustom langsung melakukan pemindaian baru...\e[0m"
 rm -f /var/lib/check_mk_agent/cache/cache_*.txt
 
@@ -180,7 +213,6 @@ for script in "${SCRIPTS[@]}"; do
     TARGET_PATH="${LOCAL_CHECKS_DIR}/${script}"
     
     echo "Mengunduh: ${script}..."
-    # Gunakan -f agar tidak mengunduh halaman 404
     if curl -sSfL -o "${TARGET_PATH}" "${SCRIPT_URL}"; then
         chmod +x "${TARGET_PATH}"
         echo -e "\e[32m[SUCCESS] Berhasil memasang ${script}\e[0m"
@@ -198,31 +230,23 @@ LOG_FILE="${LOG_DIR}/memtester_health.log"
 mkdir -p "${LOG_DIR}"
 chmod 755 "${LOG_DIR}"
 
-# Tulis script runner
 cat << 'EOF' > "${RUNNER_PATH}"
 #!/usr/bin/env bash
-# Script Runner Memtester Asinkron - Menghitung 20% Free RAM & Menjalankan Tes
-
 LOG_DIR="/var/log/checkmk_custom"
 LOG_FILE="${LOG_DIR}/memtester_health.log"
 mkdir -p "$LOG_DIR"
 
 echo "=== MEMTESTER START: $(date) ===" > "$LOG_FILE"
-
-# Hitung 20% dari Free RAM saat ini
 FREE_RAM=$(free -m | awk '/^Mem:/{print $4}')
 SAMPLE_MB=$(( FREE_RAM * 20 / 100 ))
 
-# Batas minimum alokasi adalah 128MB agar memtester berjalan dengan valid
 if [ $SAMPLE_MB -lt 128 ]; then
     SAMPLE_MB=128
 fi
 
-# Catat ukuran sampel ke log agar bisa dibaca ram_health.sh secara dinamis
 echo "SAMPLE_SIZE: ${SAMPLE_MB}M" >> "$LOG_FILE"
 echo "Menjalankan memtester dengan alokasi ${SAMPLE_MB}MB..." >> "$LOG_FILE"
 
-# Jalankan memtester 1 siklus saja untuk diagnosa kesehatan RAM
 if memtester ${SAMPLE_MB}M 1 >> "$LOG_FILE" 2>&1; then
     echo "STATUS: SUCCESS" >> "$LOG_FILE"
 else
@@ -238,12 +262,11 @@ chmod +x "${RUNNER_PATH}"
 CRON_JOB="0 11 * * 6 ${RUNNER_PATH} >/dev/null 2>&1"
 (crontab -l 2>/dev/null | grep -Fv "${RUNNER_PATH}"; echo "${CRON_JOB}") | crontab -
 
-# Jalankan pengujian pertama kali di background agar langsung ada data log awal
 echo -e "\e[32m[INFO] Memulai pengujian RAM pertama di latar belakang (background)...\e[0m"
 nohup "${RUNNER_PATH}" >/dev/null 2>&1 &
 
 echo -e "\e[32m===================================================\e[0m"
-echo -e "\e[32m[SUCCESS] Instalasi Agen Checkmk Selesai!\e[0m"
-echo -e "\e[32mClient telah terdaftar di Cron Scheduler (Setiap Sabtu pukul 11:00 AM).\e[0m"
-echo -e "\e[32mPastikan untuk mendaftarkan host ini di server Checkmk Anda.\e[0m"
+echo -e "\e[32m[SUCCESS] Instalasi Agen Checkmk & Tooling Selesai!\e[0m"
+echo -e "\e[32m- smartmontools: Terpasang\e[0m"
+echo -e "\e[32m- HDSentinel: Terpasang di /usr/local/bin/hdsentinel\e[0m"
 echo -e "\e[32m===================================================\e[0m"
