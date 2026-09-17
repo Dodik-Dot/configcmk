@@ -1,12 +1,12 @@
 # Checkmk Client Monitoring Agent Script Suite
 
-Sistem pemantauan agen kustom **Checkmk** berbasis skrip otomatis untuk melakukan pengawasan terstandarisasi pada seluruh host client **Linux** dan **Windows**. Seluruh konfigurasi, skrip monitoring (_local checks_), dan installer otomatis dikelola secara terpusat pada repositori GitHub resmi **`andin1st/scriptcmk`**.
+Sistem pemantauan agen kustom **Checkmk** berbasis skrip otomatis untuk melakukan pengawasan terstandarisasi pada seluruh host client **Linux** dan **Windows**. Seluruh konfigurasi, skrip monitoring (_local checks_), dan installer otomatis dikelola secara terpusat pada repositori GitHub resmi **`Dodik-Dot/configcmk`**.
 
 Dengan arsitektur ini, baik server Linux maupun Windows klien akan memancarkan matriks serta visualisasi pemantauan yang **identik dan terstandarisasi** ke server pusat Checkmk.
 
 ---
 
-## 📂 Struktur Repositori GitHub (`andin1st/scriptcmk`)
+## 📂 Struktur Repositori GitHub (`Dodik-Dot/configcmk`)
 
 ```text
 andin1st/scriptcmk/
@@ -50,7 +50,7 @@ andin1st/scriptcmk/
 Jalankan perintah berikut di terminal target Linux untuk mengunduh agen (.deb/.rpm), mengonfigurasi dependensi, memasang 10 skrip pemantauan, dan mengatur Cron Job uji RAM Sabtu jam 11:00 AM:
 
 ```bash
-curl -sSfgL https://raw.githubusercontent.com/andin1st/scriptcmk/main/linux/install.sh | sudo bash 
+curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | sudo bash
 ```
 
 ### **B. Windows Host (Windows 10, 11, Server)**
@@ -58,7 +58,7 @@ curl -sSfgL https://raw.githubusercontent.com/andin1st/scriptcmk/main/linux/inst
 Buka **PowerShell sebagai Administrator**, lalu jalankan perintah bypass satu baris berikut untuk menginstal agen (.msi), memasang 10 skrip PowerShell, membersihkan cache lama, dan mendaftarkan Windows Task Scheduler uji RAM asinkron hari Sabtu jam 11:00 AM:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/andin1st/scriptcmk/main/windows/install.ps1'))
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/windows/install.ps1'))
 ```
 
 _Untuk kebutuhan deployment massal non-interaktif di Windows, Anda dapat melewatkan parameter konfigurasi Server secara langsung:_
@@ -66,7 +66,9 @@ _Untuk kebutuhan deployment massal non-interaktif di Windows, Anda dapat melewat
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/andin1st/scriptcmk/main/windows/install.ps1'))) -s "192.168.43.100:8089" -d "cmk"
 ```
-
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/windows/install.ps1'))) -s "IP_SERVER_CHECKMK:PORT" -d "NAMA_SITE"
+```
 ---
 
 ## 📋 Matriks Standardisasi Threshold (Checkmk)
