@@ -52,6 +52,10 @@ Jalankan perintah berikut di terminal target Linux untuk mengunduh agen (.deb/.r
 ```bash
 curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | sudo bash
 ```
+Jika ingin meremove semua config yang pernah ada :
+```bash
+sudo rm -rf /usr/lib/check_mk_agent/local/* /var/lib/check_mk_agent/cache/* && curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | sudo bash
+```
 
 ### **B. Windows Host (Windows 10, 11, Server)**
 
