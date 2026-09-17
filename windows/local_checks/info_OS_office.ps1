@@ -82,7 +82,7 @@ if ($NeedUpdate) {
         $OfficeList = [System.Collections.Generic.List[string]]::new()
         $OtherList  = [System.Collections.Generic.List[string]]::new()
 
-       # A. Deteksi Click-to-Run (C2R) Apps & Suites
+        # A. Deteksi Click-to-Run (C2R) Apps & Suites
         $CtrPath = "HKLM:\Software\Microsoft\Office\ClickToRun\Configuration"
         if (Test-Path $CtrPath) {
             $ReleaseIDs = Get-ItemPropertyValue -Path $CtrPath -Name "ProductReleaseIDs" -ErrorAction SilentlyContinue
@@ -91,23 +91,26 @@ if ($NeedUpdate) {
                 $c2rItems = $ReleaseIDs -split ","
                 foreach ($item in $c2rItems) {
                     $cleanItem = $item.Trim()
+                    # Menambahkan break pada tiap cabang switch untuk mencegah duplikasi output array
                     $label = switch -Wildcard ($cleanItem) {
-                        "*O365*"                                { "Microsoft 365" }
-                        "*ProPlus2024*"                         { "Office Pro Plus 2024" }
-                        "*ProPlus2021*"                         { "Office Pro Plus 2021" }
-                        "*ProPlus2019*"                         { "Office Pro Plus 2019" }
-                        "*ProPlus2016*"                         { "Office Pro Plus 2016" }
-                        "*Excel2024*"                           { "Microsoft Excel 2024 LTSC" }
-                        "*ExcelLTSC*"                           { "Microsoft Excel 2024 LTSC" }
-                        "*Excel2021*"                           { "Microsoft Excel 2021" }
-                        "*Excel2019*"                           { "Microsoft Excel 2019" }
-                        "*Excel2016*"                           { "Microsoft Excel 2016" }
-                        "*Excel*"                               { "Microsoft Excel 2024 LTSC" }
-                        "*Word*"                                { "Microsoft Word (Standalone)" }
-                        "*Visio*"                               { "Microsoft Visio" }
-                        "*Project*"                             { "Microsoft Project" }
-                        default                                 { $cleanItem }
+                        "*O365*"         { "Microsoft 365"; break }
+                        "*ProPlus2024*" { "Office Pro Plus 2024"; break }
+                        "*ProPlus2021*" { "Office Pro Plus 2021"; break }
+                        "*ProPlus2019*" { "Office Pro Plus 2019"; break }
+                        "*ProPlus2016*" { "Office Pro Plus 2016"; break }
+                        "*Excel2024*"   { "Microsoft Excel 2024 LTSC"; break }
+                        "*ExcelLTSC*"   { "Microsoft Excel 2024 LTSC"; break }
+                        "*Excel2021*"   { "Microsoft Excel 2021"; break }
+                        "*Excel2019*"   { "Microsoft Excel 2019"; break }
+                        "*Excel2016*"   { "Microsoft Excel 2016"; break }
+                        "*Excel*"       { "Microsoft Excel 2024 LTSC"; break }
+                        "*Word*"        { "Microsoft Word (Standalone)"; break }
+                        "*Visio*"       { "Microsoft Visio"; break }
+                        "*Project*"     { "Microsoft Project"; break }
+                        default         { $cleanItem; break }
                     }
+
+                    if ($label -is [array]) { $label = $label[0] }
                     $c2rTag = if ($VerReport) { "$label (v$VerReport)" } else { $label }
                     if (-not $OfficeList.Contains($c2rTag)) { $OfficeList.Add($c2rTag) }
                 }
@@ -146,16 +149,21 @@ if ($NeedUpdate) {
                 if (-not $exists) { $OfficeList.Add($itemWithVer) }
             }
             elseif ($dn -match "^LibreOffice") {
-                $lo = if ($dv) { "$dn $dv" } else { $dn }
+                # Cegah pengulangan jika DisplayName sudah memuat nomor versi
+                if ($dv -and ($dn -notmatch [regex]::Escape($dv))) {
+                    $lo = "$dn $dv"
+                } else {
+                    $lo = $dn
+                }
                 if (-not ($OtherList | Where-Object { $_ -like "*LibreOffice*" })) { $OtherList.Add($lo.Trim()) }
             }
             elseif ($dn -match "WPS Office" -and $dn -notmatch $ExcludePattern) {
-                $wps = if ($dv) { "WPS Office v$dv" } else { "WPS Office" }
+                $wps = if ($dv -and ($dn -notmatch [regex]::Escape($dv))) { "WPS Office v$dv" } else { $dn }
                 if (-not ($OtherList | Where-Object { $_ -like "*WPS Office*" })) { $OtherList.Add($wps.Trim()) }
             }
         }
         
-        # C. Pindai Lisensi OSPP.VBS (Diurutkan dari Office 2010 -> 2013 -> 2016/C2R)
+        # C. Pindai Lisensi OSPP.VBS
         $AllLicenses = [System.Collections.Generic.List[string]]::new()
         $VbsSearchPaths = @(
             "$env:ProgramFiles\Microsoft Office\Office14\OSPP.VBS",
