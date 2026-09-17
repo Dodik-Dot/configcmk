@@ -122,8 +122,6 @@ if ($NeedUpdate) {
             "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
         )
         $InstalledApps = Get-ItemProperty $RegPaths -ErrorAction SilentlyContinue
-
-        # Daftar kata kunci yang WAJIB dibuang (Proofing tools, bahasa asing, add-in, update)
         $ExcludePattern = "MUI|Proof|Filter|Tools|Component|Update|Pack|Telemetry|Teams|Licensing|Primary Interop|Visual Studio|Add-in|Language|Service Pack|Help|Outils|Herramientas|Correcci|Vérification|Verificacion"
 
         foreach ($app in $InstalledApps) {
@@ -131,11 +129,9 @@ if ($NeedUpdate) {
             $dv = $app.DisplayVersion
             if (-not $dn) { continue }
 
-            # 1. Wajib diawali kata "Microsoft" (^Microsoft) agar paket bahasa asing otomatis gugur
             if ($dn -match "^Microsoft\s+(Office|Excel|Word|PowerPoint|Access|Outlook|Publisher|Visio|Project)" -and 
                 $dn -notmatch $ExcludePattern) {
                 
-                # Bersihkan kode bahasa di ujung nama jika ada (contoh: " - en-us")
                 $cleanName = ($dn -replace '\s*-\s*[a-z]{2}-[a-z]{2}$', '').Trim()
                 $itemWithVer = if ($dv) { "$cleanName (v$dv)" } else { $cleanName }
                 
@@ -145,28 +141,26 @@ if ($NeedUpdate) {
                 }
                 if (-not $exists) { $OfficeList.Add($itemWithVer) }
             }
-            # 2. Deteksi LibreOffice
             elseif ($dn -match "^LibreOffice") {
                 $lo = if ($dv) { "$dn $dv" } else { $dn }
                 if (-not ($OtherList | Where-Object { $_ -like "*LibreOffice*" })) { $OtherList.Add($lo.Trim()) }
             }
-            # 3. Deteksi WPS Office
             elseif ($dn -match "WPS Office" -and $dn -notmatch $ExcludePattern) {
                 $wps = if ($dv) { "WPS Office v$dv" } else { "WPS Office" }
                 if (-not ($OtherList | Where-Object { $_ -like "*WPS Office*" })) { $OtherList.Add($wps.Trim()) }
             }
         }
 
-        # C. Pindai Multi-License OSPP.VBS (Office14, Office15, dan Office16)
+        # C. Pindai Lisensi OSPP.VBS (Diurutkan dari Office 2010 -> 2013 -> 2016/C2R)
         $AllLicenses = [System.Collections.Generic.List[string]]::new()
         $VbsSearchPaths = @(
-            "$env:ProgramFiles\Microsoft Office\Office16\OSPP.VBS",
-            "${env:ProgramFiles(x86)}\Microsoft Office\Office16\OSPP.VBS",
+            "$env:ProgramFiles\Microsoft Office\Office14\OSPP.VBS",
+            "${env:ProgramFiles(x86)}\Microsoft Office\Office14\OSPP.VBS",
             "$env:ProgramFiles\Microsoft Office\Office15\OSPP.VBS",
             "${env:ProgramFiles(x86)}\Microsoft Office\Office15\OSPP.VBS",
-            "$env:ProgramFiles\Microsoft Office\Office14\OSPP.VBS",
-            "${env:ProgramFiles(x86)}\Microsoft Office\Office14\OSPP.VBS"
-        ) | Where-Object { Test-Path $_ }
+            "$env:ProgramFiles\Microsoft Office\Office16\OSPP.VBS",
+            "${env:ProgramFiles(x86)}\Microsoft Office\Office16\OSPP.VBS"
+        ) | Where-Object { Test-Path $_ } | Select-Object -Unique
 
         foreach ($vPath in $VbsSearchPaths) {
             $CscriptOut = cscript.exe //nologo "$vPath" /dstatus 2>$null
