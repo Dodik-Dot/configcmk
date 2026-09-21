@@ -15,7 +15,8 @@ $Today16 = Get-Date -Hour 16 -Minute 0 -Second 0$Last16  = if ($Now -lt$Today16)
 $NeedUpdate =$true
 if (Test-Path $CacheFile) {
     $CacheMtime = (Get-Item$CacheFile).LastWriteTime
-    if ($CacheMtime -ge$Last16) {
+    $CacheSize  = (Get-Item$CacheFile).Length
+    if ($CacheMtime -ge $Last16 -and$CacheSize -gt 10) {
         $NeedUpdate =$false
     }
 }
@@ -23,15 +24,10 @@ if (Test-Path $CacheFile) {
 if ($NeedUpdate) {
     if (Test-Path $CacheFile) { Remove-Item$CacheFile -Force }
 
-    $RemoteList = [System.Collections.Generic.List[string]]::new()
+    $RemoteList = @()
 
-    # =================================================================
-    # 1. DETEKSI ANYDESK
-    # =================================================================
-    $AnyDeskID =$null
-    
-    # Cek System Service Config (Installed Version)
-    $AnySysPaths = @(
+    # --- 1. ANYDESK ---
+    $AnyDeskID = $null$AnySysPaths = @(
         "$env:ProgramData\AnyDesk\system.conf",
         "${env:ProgramFiles(x86)}\AnyDesk\system.conf",
         "$env:ProgramFiles\AnyDesk\system.conf"
@@ -45,7 +41,6 @@ if ($NeedUpdate) {
         }
     }
 
-    # Cek User Profiles jika dijalankan Portable / Standalone
     if (-not $AnyDeskID) {$UserAnyConf = Get-ChildItem -Path "C:\Users\*\AppData\Roaming\AnyDesk\system.conf" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($UserAnyConf) {$c = Get-Content $UserAnyConf.FullName -ErrorAction SilentlyContinue$line = $c \vert{} Where-Object {$_ -match "^\s*ad\.id\s*=" } | Select-Object -First 1
             if ($line) {
@@ -54,21 +49,17 @@ if ($NeedUpdate) {
         }
     }
 
-    # Fallback Registry
-    if (-not $AnyDeskID) {$AnyDeskID = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\AnyDesk\Client" -Name "ad.id" -ErrorAction SilentlyContinue
-        if (-not $AnyDeskID) {$AnyDeskID = Get-ItemPropertyValue -Path "HKCU:\Software\AnyDesk\Client" -Name "ad.id" -ErrorAction SilentlyContinue
-        }
+    if (-not $AnyDeskID) {$regVal = Get-ItemProperty -Path "HKLM:\SOFTWARE\AnyDesk\Client" -ErrorAction SilentlyContinue
+        if ($regVal -and$regVal.'ad.id') { $AnyDeskID =$regVal.'ad.id' }
     }
 
     if ($AnyDeskID) {
-        $RemoteList.Add("AnyDesk (ID: $AnyDeskID)")
+        $RemoteList += "AnyDesk (ID: $AnyDeskID)"
     } elseif (Get-Process -Name "AnyDesk" -ErrorAction SilentlyContinue) {
-        $RemoteList.Add("AnyDesk (Running)")
+        $RemoteList += "AnyDesk (Running)"
     }
 
-    # =================================================================
-    # 2. DETEKSI RUSTDESK
-    # =================================================================
+    # --- 2. RUSTDESK ---
     $RustDeskID = $null$RustConfFiles = @(
         "$env:ProgramData\RustDesk\config\RustDesk2.toml",
         "$env:ProgramData\RustDesk\config\rustdesk.toml",
@@ -90,34 +81,24 @@ if ($NeedUpdate) {
     }
 
     if ($RustDeskID) {
-        $RemoteList.Add("RustDesk (ID: $RustDeskID)")
+        $RemoteList += "RustDesk (ID: $RustDeskID)"
     } elseif (Get-Process -Name "rustdesk" -ErrorAction SilentlyContinue) {
-        $RemoteList.Add("RustDesk (Running)")
+        $RemoteList += "RustDesk (Running)"
     }
 
-    # =================================================================
-    # 3. DETEKSI ANYVIEWER
-    # =================================================================
-    $AnyViewerID =$null
-
-    # Cek Registry AnyViewer (32-bit & 64-bit node)
-    $AvRegPaths = @(
+    # --- 3. ANYVIEWER ---
+    $AnyViewerID = $null$AvRegPaths = @(
         "HKLM:\SOFTWARE\AOMEI\AnyViewer",
-        "HKLM:\SOFTWARE\WOW6432Node\AOMEI\AnyViewer",
-        "HKCU:\Software\AOMEI\AnyViewer"
+        "HKLM:\SOFTWARE\WOW6432Node\AOMEI\AnyViewer"
     )
     foreach ($reg in$AvRegPaths) {
-        if (Test-Path $reg) {
-            $val = Get-ItemPropertyValue -Path$reg -Name "DeviceID" -ErrorAction SilentlyContinue
-            if (-not $val) { $val = Get-ItemPropertyValue -Path$reg -Name "ClientID" -ErrorAction SilentlyContinue }
-            if ($val) {
-                $AnyViewerID = [string]$val
-                break
-            }
+        $val = Get-ItemProperty -Path$reg -ErrorAction SilentlyContinue
+        if ($val) {
+            if ($val.DeviceID) { $AnyViewerID = [string]$val.DeviceID; break }
+            if ($val.ClientID) { $AnyViewerID = [string]$val.ClientID; break }
         }
     }
 
-    # Cek File Konfigurasi AnyViewer jika Registry tidak memuat ID
     if (-not $AnyViewerID) {$AvConfFiles = @(
             "$env:ProgramData\AnyViewer\config.ini",
             "$env:ProgramData\AOMEI\AnyViewer\config.ini"
@@ -137,19 +118,16 @@ if ($NeedUpdate) {
         }
     }
 
-    # Cek Path Eksekusi / Proses jika ID belum terbaca
-    $AvExeInstalled = (Test-Path "${env:ProgramFiles(x86)}\AnyViewer\AnyViewer.exe") -or 
-                      (Test-Path "$env:ProgramFiles\AnyViewer\AnyViewer.exe") -or 
-                      (Get-Process -Name "AnyViewer*" -ErrorAction SilentlyContinue)
+    $AvInstalled = (Test-Path "${env:ProgramFiles(x86)}\AnyViewer\AnyViewer.exe") -or 
+                   (Test-Path "$env:ProgramFiles\AnyViewer\AnyViewer.exe") -or 
+                   (Get-Process -Name "AnyViewer*" -ErrorAction SilentlyContinue)
 
     if ($AnyViewerID) {
-        $RemoteList.Add("AnyViewer (ID: $AnyViewerID)")
-    } elseif ($AvExeInstalled) {$RemoteList.Add("AnyViewer (Installed)")
+        $RemoteList += "AnyViewer (ID: $AnyViewerID)"
+    } elseif ($AvInstalled) {$RemoteList += "AnyViewer (Installed)"
     }
 
-    # =================================================================
-    # 4. FORMAT OUTPUT CHECKMK
-    # =================================================================
+    # Format Output Checkmk
     if ($RemoteList.Count -gt 0) {
         $Details =$RemoteList -join " | "
     } else {
@@ -160,4 +138,8 @@ if ($NeedUpdate) {
     $OutputLine \vert{} Out-File -FilePath$CacheFile -Encoding utf8 -Force
 }
 
-Get-Content $CacheFile -ErrorAction SilentlyContinue
+if (Test-Path $CacheFile) {
+    Get-Content $CacheFile -ErrorAction SilentlyContinue
+} else {
+    Write-Output "0 `"Remote_Apps`" - Status : OK | No remote apps detected."
+}
