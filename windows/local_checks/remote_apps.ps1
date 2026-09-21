@@ -29,7 +29,7 @@ if ($NeedUpdateWeekly) {$linesWeekly = [System.Collections.Generic.List[string]]
         # 1. AnyDesk
         $ad_paths = @("$env:ProgramData\AnyDesk\system.conf"); foreach ($u in $users) {$ad_paths += "$($u.FullName)\AppData\Roaming\AnyDesk\system.conf" }
         foreach ($path in$ad_paths) {
-            if (Test-Path $path) { $ad_conf = Get-Content$path -ErrorAction SilentlyContinue; $ad_line =$ad_conf | Where-Object { $_ -match "^ad\.anynet\.id=" }; if ($ad_line) { $ANYDESK_ID = ($ad_line -split "=")[1].Trim(); break } }
+            if (Test-Path $path) { $ad_conf = Get-Content$path -ErrorAction SilentlyContinue; $ad_line = $ad_conf \vert{} Where-Object {$_ -match "^ad\.anynet\.id=" -or $_ -match "^ad\.id=" }; if ($ad_line) { $ANYDESK_ID = ($ad_line -split "=")[1].Trim(); break } }
         }
 
         # 2. RustDesk
@@ -40,66 +40,36 @@ if ($NeedUpdateWeekly) {$linesWeekly = [System.Collections.Generic.List[string]]
             foreach ($path in$rd_paths) { if (Test-Path $path) {$content = Get-Content $path -Raw -ErrorAction SilentlyContinue; if ($content -match '(?m)^\s*id\s*=\s*[''"]?(\d{8,15})[''"]?') { $RUSTDESK_ID =$matches[1].Trim(); break } } }
         }
 
-        # 3. AnyViewer (Metode Komprehensif: Registry + INI File + AppData)
-        # Tahap A: Registry HKU & HKLM (Option, Setting, dan Root)
-        $regCandidates = @(
-            "HKLM:\SOFTWARE\Aomei\AnyViewer",
-            "HKLM:\SOFTWARE\Aomei\AnyViewer\Option",
-            "HKLM:\SOFTWARE\Aomei\AnyViewer\Setting",
-            "HKLM:\SOFTWARE\WOW6432Node\Aomei\AnyViewer",
-            "HKLM:\SOFTWARE\WOW6432Node\Aomei\AnyViewer\Option",
-            "HKLM:\SOFTWARE\WOW6432Node\Aomei\AnyViewer\Setting"
-        )
+        # 3. AnyViewer (Deteksi Menyeluruh: Registry + INI File + Proses)
         $hu = Get-ChildItem -Path "Registry::HKEY_USERS" -ErrorAction SilentlyContinue
-        foreach ($h in$hu) {
+        foreach ($h in$hu) { 
             if ($h.PSChildName -notmatch "_Classes$") {
-                $regCandidates += "$($h.PSPath)\SOFTWARE\Aomei\AnyViewer"
-                $regCandidates += "$($h.PSPath)\SOFTWARE\Aomei\AnyViewer\Option"
-                $regCandidates += "$($h.PSPath)\SOFTWARE\Aomei\AnyViewer\Setting"
+                $av_reg = "$($h.PSPath)\SOFTWARE\Aomei\AnyViewer\Option"
+                if (Test-Path $av_reg) { $val = Get-ItemPropertyValue -Path$av_reg -Name "DeviceID" -ErrorAction SilentlyContinue; if ($val) { $ANYVIEWER_ID = [string]$val; break } }
             }
         }
-        foreach ($r in$regCandidates) {
-            if (Test-Path $r) {
-                $p = Get-ItemProperty -Path$r -ErrorAction SilentlyContinue
-                if ($p) {
-                    $propVal =$p.DeviceID; if (-not $propVal) {$propVal = $p.ClientID }; if (-not$propVal) { $propVal =$p.cid }
-                    if ($propVal -and "$propVal" -match '\d{6,15}') { $ANYVIEWER_ID = "$propVal".Trim(); break }
-                }
-            }
+        if ($ANYVIEWER_ID -eq "Not Installed") { 
+            $val = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\WOW6432Node\Aomei\AnyViewer\Option" -Name "DeviceID" -ErrorAction SilentlyContinue
+            if ($val) { $ANYVIEWER_ID = [string]$val } 
         }
-
-        # Tahap B: File Konfigurasi .ini / .cfg di ProgramData & AppData Pengguna
         if ($ANYVIEWER_ID -eq "Not Installed") {
-            $av_files = @(
-                "$env:ProgramData\AnyViewer\config.ini",
-                "$env:ProgramData\Aomei\AnyViewer\config.ini",
-                "$env:ProgramFiles\AnyViewer\config.ini",
-                "${env:ProgramFiles(x86)}\AnyViewer\config.ini"
-            )
-            foreach ($u in $users) {$av_files += "$($u.FullName)\AppData\Roaming\AnyViewer\config.ini"
-                $av_files += "$($u.FullName)\AppData\Roaming\Aomei\AnyViewer\config.ini"
-                $av_files += "$($u.FullName)\AppData\Local\AnyViewer\config.ini"
-                $av_files += "$($u.FullName)\AppData\Roaming\AnyViewer\user.cfg"
-            }
+            $av_files = @("$env:ProgramData\AnyViewer\config.ini", "$env:ProgramFiles\AnyViewer\config.ini", "${env:ProgramFiles(x86)}\AnyViewer\config.ini")
+            foreach ($u in$users) { $av_files += "$($u.FullName)\AppData\Roaming\AnyViewer\config.ini"; $av_files += "$($u.FullName)\AppData\Local\AnyViewer\config.ini" }
             foreach ($f in$av_files) {
                 if (Test-Path $f) {
                     $txt = Get-Content$f -Raw -ErrorAction SilentlyContinue
-                    if ($txt -match '(?mi)^\s*(?:DeviceID|ClientID|cid|code|account_id)\s*=\s*[''"]?(\d{6,15})') {
-                        $ANYVIEWER_ID =$matches[1].Trim()
-                        break
-                    }
+                    if ($txt -match '(?mi)^\s*(?:DeviceID|ClientID|cid)\s*=\s*[''"]?(\d{6,15})') { $ANYVIEWER_ID =$matches[1].Trim(); break }
                 }
             }
         }
-
-        # Tahap C: Deteksi Proses / Executable jika ID belum tersimpan dalam plaintext
         if ($ANYVIEWER_ID -eq "Not Installed") {
-            $isAvRun = Get-Process -Name "AnyViewer*" -ErrorAction SilentlyContinue
-            $isAvInstalled = (Test-Path "$env:ProgramFiles\AnyViewer\AnyViewer.exe") -or (Test-Path "${env:ProgramFiles(x86)}\AnyViewer\AnyViewer.exe")
-            if ($isAvRun -or $isAvInstalled) {$ANYVIEWER_ID = "Installed" }
+            if ((Test-Path "$env:ProgramFiles\AnyViewer\AnyViewer.exe") -or (Test-Path "${env:ProgramFiles(x86)}\AnyViewer\AnyViewer.exe") -or (Get-Process -Name "AnyViewer*" -ErrorAction SilentlyContinue)) {
+                $ANYVIEWER_ID = "Installed"
+            }
         }
 
-        $linesWeekly.Add("0 `"Remote_Access_ID`" - OK: AnyDesk: $ANYDESK_ID | RustDesk: $RUSTDESK_ID \vert{} AnyViewer:$ANYVIEWER_ID")
+        # Gunakan Remote_Apps agar cocok dengan service yang dimonitor Checkmk
+        $linesWeekly.Add("0 `"Remote_Apps`" - OK: AnyDesk: $ANYDESK_ID | RustDesk: $RUSTDESK_ID \vert{} AnyViewer:$ANYVIEWER_ID")
     } catch {}
     Save-CacheAndOutput -FilePath $WeeklyCache -Lines$linesWeekly
 } else { Read-CacheAndOutput -FilePath $WeeklyCache }
