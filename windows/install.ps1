@@ -225,6 +225,7 @@ $LocalChecks = @(
     "info_OS_office.ps1",
     "ram_health.ps1",
     "ram_usage.ps1",
+    "remote_access_id.ps1",
     "remote_apps.ps1",
     "storage_usage.ps1"
 )
