@@ -10,20 +10,17 @@ if (-not (Test-Path $Smartctl)) {
     exit
 }
 
-# Ambil daftar perangkat unik /dev/sd* dari scan
-$devices = & $Smartctl --scan | Where-Object { $_ -match '^/dev/sd[a-z]' }
+$pipe = " " + [char]124 + " "
+$scanLines = & $Smartctl --scan | Where-Object { $_ -match '^/dev/sd[a-z]' }
 
-foreach ($devLine in $devices) {
-    if ($devLine -match '^(\S+)\s+(-d\s+\S+)') {
+foreach ($line in $scanLines) {
+    if ($line -match '^(/dev/sd[a-z])\s+-d\s+(\S+)') {
         $devPath = $matches[1]
-        $devTypeStr = $matches[2]
-        $devTypeArgs = $devTypeStr -split '\s+'
+        $devType = $matches[2]
 
-        # Eksekusi smartctl dengan parameter perangkat yang sesuai
-        $rawOutput = & $Smartctl -i -H -A $devTypeArgs $devPath 2>$null
+        $rawOutput = & $Smartctl -i -H -A -d $devType $devPath 2>$null
         $text = $rawOutput -join "`n"
 
-        # Model / Nama Drive
         $Model = "Unknown Storage"
         if ($text -match '(?mi)^Model Number:\s*(.+)$') {
             $Model =$matches[1].Trim()
@@ -31,25 +28,26 @@ foreach ($devLine in $devices) {
             $Model =$matches[1].Trim()
         }
 
-        # Tipe Drive
-        $IsNVMe = ($devTypeStr -match "nvme") -or ($text -match "NVMe")
-        $DriveType = if ($IsNVMe) { "NVME" } elseif ($text -match "Solid State|SSD") { "SSD Sata" } else { "HDD (Mekanik)" }
+        $IsNVMe = ($devType -eq "nvme") -or ($text -match "NVMe")
+        $DriveType = "HDD (Mekanik)"
+        if ($IsNVMe) {$DriveType = "NVME"
+        } elseif ($text -match "Solid State|SSD") {
+            $DriveType = "SSD Sata"
+        }
 
-        # Suhu
         $Suhu = "N/A"
         if ($text -match '(?mi)^Temperature:\s*(\d+)\s*Celsius') {$Suhu = "$($matches[1]) Celcius"
         } elseif ($text -match '(?mi)^\s*(?:194\vert{}190)\s+Temperature[^\d]+(\d+)') {$Suhu = "$($matches[1]) Celcius"
         }
 
-        # Status SMART
-        $SmartStatus = "PASSED"
+        $SmartStatus = "UNKNOWN"
         if ($text -match '(?mi)SMART overall-health self-assessment test result:\s*([^\r\n]+)') {
             $SmartStatus =$matches[1].Trim()
         } elseif ($text -match '(?mi)SMART Health Status:\s*([^\r\n]+)') {
             $SmartStatus =$matches[1].Trim()
+        } elseif ($IsNVMe -and ($text -match 'Percentage Used')) {$SmartStatus = "PASSED"
         }
 
-        # Persentase Kesehatan & Detail
         $Health = "100%"
         $DetailInfo = ""
         $State = 0
@@ -60,12 +58,11 @@ foreach ($devLine in $devices) {
                 $HealthVal = 100 -$Used
                 if ($HealthVal -lt 0) {$HealthVal = 0 }
                 $Health = "$HealthVal%"
-                if ($HealthVal -le 10) {$State = 2 
-                } elseif ($HealthVal -le 30) {$State = 1 
-                }
+                if ($HealthVal -le 10) {$State = 2 }
+                elseif ($HealthVal -le 30) {$State = 1 }
             }
             if ($text -match '(?mi)^Data Units Written:\s*[\d,]+\s*\[([^\]]+)\]') {
-                $DetailInfo = "TBW: $($matches[1].Trim()) | "
+                $DetailInfo = "TBW: " + $matches[1].Trim() +$pipe
             }
         } else {
             $BadSector = 0
@@ -76,7 +73,7 @@ foreach ($devLine in $devices) {
                 $Health = "Perhatian ($BadSector Bad Sector)"
                 $State = 1             } else {$Health = "Sehat (0 Bad Sector)"
             }
-            if ($text -match '(?mi)^\s*9\s+Power_On_Hours[^\d]+(\d+)') {$Hours = [int]$matches[1]$Days = [math]::Round($Hours / 24, 0)$DetailInfo = "Total Dipakai: $Hours Jam ($Days Hari) | "
+            if ($text -match '(?mi)^\s*9\s+Power_On_Hours[^\d]+(\d+)') {$Hours = [int]$matches[1]$Days = [math]::Round($Hours / 24, 0)$DetailInfo = "Total Dipakai: $Hours Jam ($Days Hari)" + $pipe
             }
         }
 
@@ -84,11 +81,13 @@ foreach ($devLine in $devices) {
         }
 
         $CleanName = ($Model -replace '[^a-zA-Z0-9_\-]', '_').Trim('_')
-        if (-not $CleanName) { 
-            $CleanName = ($devPath -replace '\W', '_') 
+        if (-not $CleanName) {
+            $CleanName = ($devPath -replace '\W', '_')
         }
 
-        $ServiceName = "Storage_Health_$CleanName"
-        Write-Output "$State `"$ServiceName`" - Status : OK | Drive: $DriveType \vert{} Merk:$Model | Kesehatan: $Health \vert{} Suhu:$Suhu | ${DetailInfo}SMART:$SmartStatus"
+        $ServiceName = "Storage_Health_" + $CleanName
+        $Summary = "Status : OK" + $pipe + "Drive: " + $DriveType +$pipe + "Merk: " + $Model +$pipe + "Kesehatan: " + $Health +$pipe + "Suhu: " + $Suhu +$pipe + $DetailInfo + "SMART: " + $SmartStatus
+
+        Write-Output "$State `"$ServiceName`" - $Summary"
     }
 }
