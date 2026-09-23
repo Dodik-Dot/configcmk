@@ -2,13 +2,13 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 $fanSpeed = 0
 
-# 1. Coba baca HKCU langsung
+# 1. Coba baca HKCU langsung (jika dijalankan interaktif oleh user)
 try {
     $val = (Get-ItemProperty "HKCU:\Software\HWiNFO64\VSB" -ErrorAction SilentlyContinue).ValueRaw15
     if ($val -and [int]$val -gt 0) { $fanSpeed = [int]$val }
 } catch {}
 
-# 2. Coba baca dari hive HKEY_USERS (Target langsung SID user aktif)
+# 2. Coba baca dari hive HKEY_USERS (saat dijalankan oleh service SYSTEM Checkmk)
 if ($fanSpeed -eq 0) {
     try {
         $userKeys = (Get-ChildItem -Path "Registry::HKEY_USERS" -ErrorAction SilentlyContinue).Name
