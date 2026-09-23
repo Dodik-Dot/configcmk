@@ -11,14 +11,13 @@ try {
 # 2. Coba baca dari hive HKEY_USERS (saat dijalankan oleh service SYSTEM Checkmk)
 if ($fanSpeed -eq 0) {
     try {
-        $userKeys = (Get-ChildItem -Path "Registry::HKEY_USERS" -ErrorAction SilentlyContinue).Name
-        foreach ($k in$userKeys) {
+        Get-ChildItem -Path "Registry::HKEY_USERS" -ErrorAction SilentlyContinue | ForEach-Object {
+            $k =$_.Name
             if ($k -like "*S-1-5-21-*" -and $k -notlike "*_Classes") {
                 $targetPath = "Registry::$k\Software\HWiNFO64\VSB"
                 $val = (Get-ItemProperty -Path$targetPath -ErrorAction SilentlyContinue).ValueRaw15
                 if ($val -and [int]$val -gt 0) {
                     $fanSpeed = [int]$val
-                    break
                 }
             }
         }
