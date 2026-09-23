@@ -141,29 +141,24 @@ if ($InstalledVersion) {
     Write-Host "[-] Memulai instalasi baru versi $AgentVersion..." -ForegroundColor Yellow
 }
 
-# 6. Unduh dan Pemasangan Agen Checkmk secara Silent (Hanya jika dibutuhkan)
-if ($ShouldInstall) {
-    Write-Host "[-] Mengunduh installer Agen Checkmk dari server..." -ForegroundColor Yellow
-    try {
-        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
-        Invoke-WebRequest -Uri $MsiUrl -OutFile $MsiLocalPath -UseBasicParsing
-        Write-Host "[OK] Berhasil mengunduh installer agen." -ForegroundColor Green
+# --- PENGUNDUHAN LIBREHARDWAREMONITORLIB.DLL MENGGUNAKAN CURL ---
+$LhmDownloaded = $false
+foreach ($url in $LhmSources) {
+    # Unduh via curl.exe (abaikan error SSL/TLS .NET)
+    & curl.exe -k -s -L $url -o $LhmDllPath
 
-        Write-Host "[-] Menginstal/Memperbarui Agen Checkmk secara silent (tanpa GUI)..." -ForegroundColor Yellow
-        $installProcess = Start-Process msiexec.exe -ArgumentList "/i `"$MsiLocalPath`" /qn /norestart" -Wait -PassThru
-        if ($installProcess.ExitCode -eq 0 -or $installProcess.ExitCode -eq 3010) {
-            Write-Host "[OK] Agen Checkmk berhasil diinstal!" -ForegroundColor Green
-        } else {
-            Write-Warning "Instalasi agen selesai dengan ExitCode: $($installProcess.ExitCode)"
-        }
-    } catch {
-        Write-Error "Gagal mengunduh atau menginstal agen Checkmk: $_"
-    } finally {
-        if (Test-Path $MsiLocalPath) { Remove-Item $MsiLocalPath -Force }
+    if ((Test-Path $LhmDllPath) -and ((Get-Item $LhmDllPath).Length -gt 1000)) {
+        Write-Host " -> [OK] Berhasil mengunduh LibreHardwareMonitorLib.dll dari $url" -ForegroundColor Green
+        $LhmDownloaded = $true
+        break
     }
 }
 
-# 7. Unduh Script Local Checks dari GitHub (Tepat 10 Skrip)
+if (-not $LhmDownloaded) {
+    Write-Warning "LibreHardwareMonitorLib.dll belum ada di repositori. Skrip fan_health.ps1 tetap akan menggunakan WMI fallback."
+}
+
+# --- 8. UNDUH SCRIPT LOCAL CHECKS DARI GITHUB (TEPAT 10 SKRIP VIA CURL) ---
 $LocalChecks = @(
     "battery_health.ps1",
     "cpu_info.ps1",
@@ -173,9 +168,32 @@ $LocalChecks = @(
     "info_OS_office.ps1",
     "ram_health.ps1",
     "ram_usage.ps1",
+    "remote_access_id.ps1",
     "remote_apps.ps1",
     "storage_usage.ps1"
 )
+
+Write-Host "[-] Mengunduh 10 script Local Checks dari GitHub..." -ForegroundColor Yellow
+
+# Pastikan folder target ada
+$LocalChecksDir = "C:\ProgramData\checkmk\agent\local"
+if (-not (Test-Path $LocalChecksDir)) {
+    New-Item -ItemType Directory -Path $LocalChecksDir -Force | Out-Null
+}
+
+foreach ($script in $LocalChecks) {
+    $url = "https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/windows/local_checks/$script"
+    $destination = Join-Path $LocalChecksDir $script
+
+    # Unduh menggunakan curl.exe bawaan Windows
+    & curl.exe -k -s -L $url -o $destination
+
+    if ((Test-Path $destination) -and ((Get-Item $destination).Length -gt 100)) {
+        Write-Host " -> [OK] Berhasil mengunduh: $script" -ForegroundColor Green
+    } else {
+        Write-Warning "Gagal mengunduh script: $script dari $url. Melewati..."
+    }
+}
 
 Write-Host "[-] Mengunduh 10 script Local Checks dari GitHub..." -ForegroundColor Yellow
 foreach ($script in $LocalChecks) {
