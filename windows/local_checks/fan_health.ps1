@@ -1,55 +1,54 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
-$fanSpeed   = 0$sensorName = "Dell EC"
+$fanSpeed = 0
 
-# 1. Prioritaskan HKCU dari user yang sedang login aktif
+# 1. Cek langsung HKCU (jika dijalankan manual oleh user)
 if (Test-Path "HKCU:\Software\HWiNFO64\VSB") {
-    $props = Get-ItemProperty -Path "HKCU:\Software\HWiNFO64\VSB"
-    if ($props.ValueRaw15 -and [int]$props.ValueRaw15 -gt 0) {
-        $fanSpeed   = [int]$props.ValueRaw15
-        $sensorName = if ($props.Label15) { "HWiNFO ($($props.Label15))" } else { "Dell EC" }
-    }
+    $val = (Get-ItemProperty "HKCU:\Software\HWiNFO64\VSB").ValueRaw15
+    if ($val -and [int]$val -gt 0) { $fanSpeed = [int]$val }
 }
 
-# 2. Jika dijalankan oleh SYSTEM Agent, telusuri hive semua User
+# 2. Cek semua hive di HKEY_USERS (saat dieksekusi oleh service SYSTEM Checkmk)
 if ($fanSpeed -eq 0) {
-    $userHives = Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue \vert{} Where-Object {$_.Name -notmatch "_Classes$" -and $_.Name -like "S-1-5-21-*" }
-    foreach ($u in $userHives) {$regPath = "Registry::$($u.Name)\Software\HWiNFO64\VSB"
-        if (Test-Path $regPath) {
-            $props = Get-ItemProperty -Path$regPath
-            if ($props.ValueRaw15 -and [int]$props.ValueRaw15 -gt 0) {
-                $fanSpeed   = [int]$props.ValueRaw15
-                $sensorName = if ($props.Label15) { "HWiNFO ($($props.Label15))" } else { "Dell EC" }
-                break
+    # Ambil SID user yang sedang aktif login di Windows
+    $loggedUser = (Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" | Invoke-CimMethod -MethodName GetOwnerSid).Sid | Select-Object -Unique
+
+    if ($loggedUser) {
+        foreach ($sid in $loggedUser) {$userVsb = "Registry::HKEY_USERS\$sid\Software\HWiNFO64\VSB"
+            if (Test-Path $userVsb) {
+                $val = (Get-ItemProperty$userVsb).ValueRaw15
+                if ($val -and [int]$val -gt 0) {
+                    $fanSpeed = [int]$val
+                    break
+                }
             }
         }
     }
 }
 
-# 3. Fallback CIM/WMI
+# 3. Fallback scan menyeluruh seluruh subkey HKEY_USERS
 if ($fanSpeed -eq 0) {
-    Get-CimInstance -ClassName Win32_Fan -ErrorAction SilentlyContinue | ForEach-Object {
-        if ($_.DesiredSpeed -and [int]$_.DesiredSpeed -gt 0) {
-            $fanSpeed   = [int]$_.DesiredSpeed
-            $sensorName = "Win32_Fan"
+    Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue | ForEach-Object {
+        $p = "Registry::$($_.Name)\Software\HWiNFO64\VSB"
+        if (Test-Path $p) {
+            $val = (Get-ItemProperty$p).ValueRaw15
+            if ($val -and [int]$val -gt 0) {
+                $fanSpeed = [int]$val
+            }
         }
     }
 }
 
 # 4. Evaluasi Kondisi Kipas & Format Output Checkmk
 if ($fanSpeed -gt 0) {
-    # Tentukan deskripsi kondisi berdasarkan rentang RPM
     if ($fanSpeed -ge 5500) {$kondisi = "Maximum / Turbo"
-        $state   = 0   # Ubah ke 1 jika ingin Checkmk memunculkan WARN saat kipas dipaksa turbo
     } elseif ($fanSpeed -ge 4500) {$kondisi = "High Speed (Heavy Load)"
-        $state   = 0
     } elseif ($fanSpeed -ge 2500) {$kondisi = "Medium (Active Cooling)"
-        $state   = 0     } else {$kondisi = "Low / Silent (Normal)"
-        $state   = 0
+    } else {
+        $kondisi = "Low / Silent (Normal)"
     }
 
-    # Format: <State> <Service> <PerfData> <Summary Text>
-    Write-Output "$state `"FAN_Health`" fan_speed=${fanSpeed};5500;6000;0;6500 Status: OK - FAN Speed: ${fanSpeed} rpm - Kondisi:$kondisi"
+    Write-Output "0 `"FAN_Health`" fan_speed=${fanSpeed};5500;6000;0;6500 Status: OK - FAN Speed: ${fanSpeed} rpm - Kondisi:$kondisi"
 } else {
     Write-Output "0 `"FAN_Health`" fan_speed=0;5500;6000;0;6500 Status: OK - FAN Speed: 0 rpm - Kondisi: Passive (Idle/Off)"
 }
