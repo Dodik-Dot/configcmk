@@ -78,6 +78,25 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManage
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/windows/install.ps1'))) -s "IP_SERVER_CHECKMK:PORT" -d "NAMA_SITE"
 ```
 ---
+Pendaftaran Sertifikat Keamanan Agen (mTLS Registration)**
+Setelah agen terpasang pada komputer client, lakukan pendaftaran sertifikat TLS sekali (*one-time registration*) agar komunikasi monitoring antara client dan server Checkmk terenkripsi secara aman via port `8000`:
+
+* **Linux Host (Terminal / Root)**:
+  ```bash
+  sudo cmk-agent-ctl register --hostname <NAMA_HOST_CLIENT> --server <IP_SERVER_CHECKMK>:8000 --site cmk --user cmkadmin
+  ```
+
+* **Windows Host (PowerShell Administrator)**:
+  ```powershell
+  $ctlPath = "C:\Program Files (x86)\checkmk\service\cmk-agent-ctl.exe"
+  if (-not (Test-Path $ctlPath)) {
+      $ctlPath = "C:\Program Files\checkmk\service\cmk-agent-ctl.exe"
+  }
+  & "$ctlPath" register --hostname <NAMA_HOST_CLIENT> --server <IP_SERVER_CHECKMK>:8000 --site cmk --user cmkadmin
+  ```
+
+---
+
 
 ## 📋 Matriks Standardisasi Threshold (Checkmk)
 
