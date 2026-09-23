@@ -2,7 +2,7 @@
 # =============================================================================
 # Checkmk Agent Bootstrap Installer - Unified Multi-Distro Edition
 # Supports: Debian/Ubuntu (.deb) and Fedora/RHEL/Alma/Rocky (.rpm)
-# Includes: smartmontools & HDSentinel CLI Auto-Installer
+# Includes: smartmontools, HDSentinel CLI, & HW/SW Inventory Auto-Installer
 # =============================================================================
 
 # Ensure script is run as root
@@ -27,6 +27,7 @@ rm -rf /var/lib/check_mk_agent/cache/*
 
 # Pastikan folder target tetap ada setelah dibersihkan
 mkdir -p /usr/lib/check_mk_agent/local
+mkdir -p /usr/lib/check_mk_agent/plugins
 mkdir -p /var/lib/check_mk_agent/cache
 
 # Help message
@@ -36,7 +37,7 @@ show_help() {
     echo "OPSI:"
     echo "  -s, --server IP/HOST      IP atau Hostname server Checkmk"
     echo "  -d, --site SITE_ID        Site ID Checkmk (Default: cmk)"
-    echo "  -v, --version VERSION     Versi Agen Checkmk (Default: 2.4.0p35-1)"
+    echo "  -v, --version VERSION     Versi Agen Checkmk (Default: 2.5.0p14-1)"
     echo "  -g, --github REPO         Repositori GitHub kustom (Format: user/repo)"
     echo "  -b, --branch BRANCH       Branch GitHub (Default: main)"
     echo "  -h, --help                Tampilkan bantuan"
@@ -93,18 +94,18 @@ fi
 
 echo -e "\e[32m[INFO] Mendeteksi Sistem Operasi: $OS_TYPE ($PKG_MANAGER)\e[0m"
 
-# Install System Dependencies (Termasuk smartmontools & gzip)
-echo -e "\e[32m[INFO] Menginstal dependensi sistem & smartmontools...\e[0m"
+# Install System Dependencies (Termasuk smartmontools, dmidecode, & pciutils untuk Inventory)
+echo -e "\e[32m[INFO] Menginstal dependensi sistem, smartmontools, & tools hardware...\e[0m"
 if [ "$OS_TYPE" = "debian" ]; then
     apt-get update -y
-    apt-get install -y curl smartmontools memtester lm-sensors jq upower bc gzip tar
+    apt-get install -y curl smartmontools memtester lm-sensors jq upower bc gzip tar dmidecode pciutils iproute2
 elif [ "$OS_TYPE" = "redhat" ]; then
     if [ "$PKG_MANAGER" = "dnf" ]; then
         dnf install -y epel-release 2>/dev/null || true
-        dnf install -y curl smartmontools memtester lm_sensors jq upower bc gzip tar
+        dnf install -y curl smartmontools memtester lm_sensors jq upower bc gzip tar dmidecode pciutils iproute
     else
         yum install -y epel-release 2>/dev/null || true
-        yum install -y curl smartmontools memtester lm_sensors jq upower bc gzip tar
+        yum install -y curl smartmontools memtester lm_sensors jq upower bc gzip tar dmidecode pciutils iproute
     fi
 fi
 
@@ -144,7 +145,9 @@ else
     echo -e "\e[32m[INFO] HDSentinel sudah terpasang di sistem.\e[0m"
 fi
 
+# ==============================================================================
 # Download & Install Checkmk Agent
+# ==============================================================================
 echo -e "\e[32m[INFO] Mengunduh Agen Checkmk dari Server...\e[0m"
 TEMP_DIR="/tmp"
 
@@ -182,16 +185,46 @@ elif [ "$OS_TYPE" = "redhat" ]; then
     fi
 fi
 
-# Ensure Local Checks Directory Exists
+# ==============================================================================
+# Download & Pasang Plugin Hardware/Software Inventory (mk_inventory.linux)
+# ==============================================================================
+echo -e "\e[32m[INFO] Mengunduh dan memasang plugin Hardware/Software Inventory...\e[0m"
+PLUGIN_DIR="/usr/lib/check_mk_agent/plugins"
+INVENTORY_FILE="${PLUGIN_DIR}/mk_inventory.linux"
+mkdir -p "${PLUGIN_DIR}"
+
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
+INVENTORY_GITHUB_URL="${GITHUB_RAW_BASE}/linux/plugins/mk_inventory.linux?v=$(date +%s)"
+
+# Coba unduh dari repositori GitHub
+if curl -sSfL "${INVENTORY_GITHUB_URL}" -o "${INVENTORY_FILE}" && [ -s "${INVENTORY_FILE}" ]; then
+    chmod +x "${INVENTORY_FILE}"
+    echo -e "\e[32m[SUCCESS] Plugin mk_inventory.linux berhasil dipasang dari GitHub.\e[0m"
+else
+    # Fallback jika unduh GitHub gagal: Ambil langsung dari Server Checkmk
+    echo -e "\e[33m[WARNING] Gagal mengunduh dari GitHub, mengambil langsung dari Server Checkmk...\e[0m"
+    SERVER_PLUGIN_URL="http://${SERVER_IP}/${SITE_ID}/check_mk/agents/plugins/mk_inventory.linux"
+    if curl -sSfL "${SERVER_PLUGIN_URL}" -o "${INVENTORY_FILE}" && [ -s "${INVENTORY_FILE}" ]; then
+        chmod +x "${INVENTORY_FILE}"
+        echo -e "\e[32m[SUCCESS] Plugin mk_inventory.linux berhasil dipasang dari Server Checkmk.\e[0m"
+    else
+        echo -e "\e[31m[ERROR] Gagal mengunduh plugin mk_inventory.linux.\e[0m"
+    fi
+fi
+
+# Bersihkan cache persist inventaris lama agar data langsung diperbarui
+rm -rf /var/lib/check_mk_agent/persisted/* 2>/dev/null
+
+# ==============================================================================
+# Download Local Checks from GitHub
+# ==============================================================================
 LOCAL_CHECKS_DIR="/usr/lib/check_mk_agent/local"
 mkdir -p "${LOCAL_CHECKS_DIR}"
 chmod 755 "${LOCAL_CHECKS_DIR}"
 
-# Membersihkan cache lama
 echo -e "\e[32m[INFO] Membersihkan file cache lama agar seluruh script kustom langsung melakukan pemindaian baru...\e[0m"
 rm -f /var/lib/check_mk_agent/cache/cache_*.txt
 
-# Download Local Checks from GitHub
 echo -e "\e[32m[INFO] Mengunduh script local checks kustom dari GitHub...\e[0m"
 SCRIPTS=(
     "battery_health.sh"
@@ -206,10 +239,10 @@ SCRIPTS=(
     "storage_usage.sh"
 )
 
-GITHUB_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/linux"
+GITHUB_RAW_URL="${GITHUB_RAW_BASE}/linux"
 
 for script in "${SCRIPTS[@]}"; do
-    SCRIPT_URL="${GITHUB_RAW_URL}/local_checks/${script}"
+    SCRIPT_URL="${GITHUB_RAW_URL}/local_checks/${script}?v=$(date +%s)"
     TARGET_PATH="${LOCAL_CHECKS_DIR}/${script}"
     
     echo "Mengunduh: ${script}..."
@@ -221,7 +254,9 @@ for script in "${SCRIPTS[@]}"; do
     fi
 done
 
+# ==============================================================================
 # Setup Asynchronous Memtester Runner
+# ==============================================================================
 echo -e "\e[32m[INFO] Mengonfigurasi Runner Memtester Asinkron...\e[0m"
 RUNNER_PATH="/usr/local/bin/run_memtester.sh"
 LOG_DIR="/var/log/checkmk_custom"
@@ -269,4 +304,5 @@ echo -e "\e[32m===================================================\e[0m"
 echo -e "\e[32m[SUCCESS] Instalasi Agen Checkmk & Tooling Selesai!\e[0m"
 echo -e "\e[32m- smartmontools: Terpasang\e[0m"
 echo -e "\e[32m- HDSentinel: Terpasang di /usr/local/bin/hdsentinel\e[0m"
+echo -e "\e[32m- HW/SW Inventory: Terpasang di /usr/lib/check_mk_agent/plugins/mk_inventory.linux\e[0m"
 echo -e "\e[32m===================================================\e[0m"
