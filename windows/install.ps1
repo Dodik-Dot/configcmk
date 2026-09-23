@@ -140,7 +140,57 @@ if ($InstalledVersion) {
     Write-Host "[INFO] Agen Checkmk belum terpasang di komputer host target." -ForegroundColor Gray
     Write-Host "[-] Memulai instalasi baru versi $AgentVersion..." -ForegroundColor Yellow
 }
+# =====================================================================
+# 5.1 Otomatisasi Instalasi Prasyarat: Smartmontools & HWiNFO64
+# =====================================================================
+Write-Host "[-] Memeriksa dependensi pendukung (Smartmontools & HWiNFO)..." -ForegroundColor Yellow
 
+# 1. Cek & Install smartmontools (smartctl.exe)
+$smartctl = Get-Command "smartctl.exe" -ErrorAction SilentlyContinue
+if (-not $smartctl -and -not (Test-Path "C:\Program Files\smartmontools\bin\smartctl.exe")) {
+    Write-Host " -> smartmontools belum terpasang. Menginstal otomatis..." -ForegroundColor Cyan
+    try {
+        # Coba via winget
+        & winget install --id Smartmontools.Smartmontools -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
+    } catch {}
+
+    # Fallback jika winget gagal/tidak ada: Download installer resmi via curl
+    if (-not (Test-Path "C:\Program Files\smartmontools\bin\smartctl.exe")) {
+        $smartInstaller = "$env:TEMP\smartmontools-installer.exe"
+        $smartUrl = "https://sourceforge.net/projects/smartmontools/files/smartmontools/7.4/smartmontools-7.4-1.win32-setup.exe/download"
+        & curl.exe -s -k -L "$smartUrl" -o "$smartInstaller"
+        if (Test-Path $smartInstaller) {
+            Start-Process -FilePath $smartInstaller -ArgumentList "/S" -Wait
+            Remove-Item $smartInstaller -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Host "[OK] smartmontools berhasil dipasang!" -ForegroundColor Green
+} else {
+    Write-Host "[OK] smartmontools sudah terpasang di sistem." -ForegroundColor Green
+}
+
+# 2. Cek & Install HWiNFO64 Portable / Installer
+$hwinfoPath = "C:\Program Files\HWiNFO64"
+if (-not (Test-Path "$hwinfoPath\HWiNFO64.exe") -and -not (Test-Path "C:\Program Files (x86)\HWiNFO64\HWiNFO64.exe")) {
+    Write-Host " -> HWiNFO64 belum terpasang. Menyiapkan instalasi otomatis..." -ForegroundColor Cyan
+    try {
+        & winget install --id REALiX.HWiNFO -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
+    } catch {}
+
+    # Fallback jika winget gagal: Download installer resmi
+    if (-not (Test-Path "$hwinfoPath\HWiNFO64.exe")) {
+        $hwInstaller = "$env:TEMP\hwi_setup.exe"
+        $hwUrl = "https://www.sac.sk/download/utildisk/hwi_804.exe"
+        & curl.exe -s -k -L "$hwUrl" -o "$hwInstaller"
+        if (Test-Path $hwInstaller) {
+            Start-Process -FilePath $hwInstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
+            Remove-Item $hwInstaller -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Host "[OK] HWiNFO64 berhasil dipasang!" -ForegroundColor Green
+} else {
+    Write-Host "[OK] HWiNFO64 sudah terpasang di sistem." -ForegroundColor Green
+}
 # 6. Unduh dan Pemasangan Agen Checkmk secara Silent (Hanya jika dibutuhkan)
 if ($ShouldInstall) {
     Write-Host "[-] Mengunduh installer Agen Checkmk dari server..." -ForegroundColor Yellow
