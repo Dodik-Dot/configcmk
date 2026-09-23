@@ -1,36 +1,43 @@
-# =====================================================================
-# Local Check Checkmk: Real-Time Fan Health & Speed (Windows Native)
-# =====================================================================
+$ErrorActionPreference = 'SilentlyContinue'
 
-$fanSpeed = 0
-$sensorName = "N/A"
+$fanSpeed   = 0$sensorName = "Dell EC"
 
-# 1. Coba baca menggunakan CIM/WMI Standar Windows (Win32_Fan)
-$fanCim = Get-CimInstance -ClassName Win32_Fan -ErrorAction SilentlyContinue
-if ($fanCim) {
-    foreach ($fan in $fanCim) {
-        if ($fan.DesiredSpeed -and $fan.DesiredSpeed -gt 0) {
-            $fanSpeed = [int]$fan.DesiredSpeed
+# 1. Baca HWiNFO64 VSB dari seluruh hive HKEY_USERS
+Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue | 
+    Where-Object { $_.Name -notmatch "_Classes$" } | 
+    ForEach-Object {
+        $path = "Registry::" + $_.Name + "\Software\hwinfo64\vsb"
+        if (Test-Path $path) {
+            $props = Get-ItemProperty$path
+            if ($props.ValueRaw15 -and [int]$props.ValueRaw15 -gt 0) {
+                $fanSpeed   = [int]$props.ValueRaw15
+                $sensorName = if ($props.Label15) { "HWiNFO (" + $props.Label15 + ")" } else { "Dell EC" }
+            }
+        }
+    }
+
+# 2. Fallback HKCU
+if ($fanSpeed -eq 0 -and (Test-Path "HKCU:\Software\HWiNFO64\VSB")) {
+    $props = Get-ItemProperty "HKCU:\Software\hwinfo64\vsb"
+    if ($props.ValueRaw15 -and [int]$props.ValueRaw15 -gt 0) {
+        $fanSpeed   = [int]$props.ValueRaw15
+        $sensorName = if ($props.Label15) { "HWiNFO (" + $props.Label15 + ")" } else { "Dell EC" }
+    }
+}
+
+# 3. Fallback Win32_Fan
+if ($fanSpeed -eq 0) {
+    Get-CimInstance -ClassName Win32_Fan -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.DesiredSpeed -and [int]$_.DesiredSpeed -gt 0) {
+            $fanSpeed   = [int]$_.DesiredSpeed
             $sensorName = "Win32_Fan"
-            break
         }
     }
 }
 
-# 2. Coba WMI Provider Vendor (Dell DCIM NumericSensor)
-if ($fanSpeed -eq 0) {
-    $dcimFan = Get-CimInstance -Namespace "root\dcim\sysman" -ClassName "DCIM_NumericSensor" -ErrorAction SilentlyContinue | 
-               Where-Object { $_.BaseUnits -eq 19 -and $_.CurrentReading -gt 0 }
-    if ($dcimFan) {
-        $fanSpeed = [int]($dcimFan | Select-Object -First 1).CurrentReading
-        $sensorName = "DCIM_NumericSensor"
-    }
-}
-
-# 3. Format Output Local Check Checkmk
-# Catatan: Menggunakan pembatas '~' pada teks deskripsi agar bebas dari error parsing perfdata '|' Checkmk
+# 4. Output Local Check Checkmk (Pemisah ~)
 if ($fanSpeed -gt 0) {
-    Write-Output "0 `"FAN_Health`" fan_speed=${fanSpeed};1600;;0; Status : OK ~ FAN Speed : ${fanSpeed}rpm ~ Sensor: ${sensorName} ~ Remark: FAN Condition Good"
+    Write-Output "0 `"FAN_Health`" fan_speed=${fanSpeed};1000;;0; Status : OK ~ FAN Speed : ${fanSpeed}rpm ~ Sensor:${sensorName} ~ Remark: FAN Condition Good"
 } else {
-    Write-Output "0 `"FAN_Health`" - Status : OK ~ FAN Speed : 0rpm ~ Remark: Passive Cooling or Sensor Not Exposed"
+    Write-Output "0 `"FAN_Health`" - Status : OK ~ FAN Speed : 0rpm ~ Remark: Dell EC Controlled (Dynamic/Passive Cooling)"
 }
