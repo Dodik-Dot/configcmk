@@ -1,138 +1,76 @@
-$ErrorActionPreference = 'SilentlyContinue'
-$CacheFolder = "$env:ProgramData\checkmk\agent"
-if (-not (Test-Path $CacheFolder)) { New-Item -ItemType Directory -Path$CacheFolder -Force | Out-Null }
-$WeeklyCache = "$CacheFolder\cache_remote_apps.txt"
+# =====================================================================
+# Local Check Checkmk: Daily Remote Apps Inventory Scan (Windows)
+# Scheduled to run once a day at 16:00
+# =====================================================================
+$CacheDir = "$env:ProgramData\checkmk\agent\cache"
+if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force $CacheDir | Out-Null }
+$CacheFile = Join-Path $CacheDir "cache_remote_apps.txt"
 
-function Save-CacheAndOutput ([string]$FilePath, [System.Collections.Generic.List[string]]$Lines) {$CleanLines = [System.Collections.Generic.List[string]]::new()
-    foreach ($l in$Lines) { 
-        if (-not [string]::IsNullOrWhiteSpace($l)) { 
-            $CleanLines.Add(($l -replace "[\r\n]+", " ").Trim()) 
-        } 
+# Get current hour and today's 16:00 threshold
+$Now = Get-Date
+$Today16 = Get-Date -Hour 16 -Minute 0 -Second 0
+if ($Now -lt $Today16) {
+    $Last16 = $Today16.AddDays(-1)
+} else {
+    $Last16 = $Today16
+}
+
+$NeedUpdate = $true
+if (Test-Path $CacheFile) {
+    $CacheMtime = (Get-Item $CacheFile).LastWriteTime
+    if ($CacheMtime -ge $Last16) {
+        $NeedUpdate = $false
     }
-    if ($CleanLines.Count -gt 0) { 
-        [System.IO.File]::WriteAllLines($FilePath,$CleanLines, [System.Text.Encoding]::UTF8)
-        foreach ($cl in $CleanLines) { Write-Output$cl } 
+}
+
+if ($NeedUpdate) {
+    $RemoteList = @()
+    
+    # --- 1. DETEKSI ANYDESK ---
+    $AnyDeskID = ""
+    # Check common system configuration path
+    $AnyConfPath = "$env:ProgramData\AnyDesk\system.conf"
+    if (Test-Path $AnyConfPath) {
+        $AnyConf = Get-Content $AnyConfPath -ErrorAction SilentlyContinue
+        $IdLine = $AnyConf | Where-Object { $_ -like "ad.id=*" }
+        if ($IdLine) {
+            $AnyDeskID = ($IdLine -replace "ad.id=", "").Trim()
+        }
     }
-}
-
-function Read-CacheAndOutput ([string]$FilePath) {
-    if (Test-Path $FilePath) { 
-        foreach ($l in [System.IO.File]::ReadAllLines($FilePath, [System.Text.Encoding]::UTF8)) { 
-            if (-not [string]::IsNullOrWhiteSpace($l)) { Write-Output$l } 
-        } 
+    # Check registry as fallback
+    if (-not $AnyDeskID) {
+        $AnyDeskID = Get-ItemPropertyValue -Path "HKCU:\Software\AnyDesk\Client" -Name "ad.id" -ErrorAction SilentlyContinue
     }
+    
+    if ($AnyDeskID) {
+        $RemoteList += "AnyDesk ID: $AnyDeskID"
+    }
+    
+    # --- 2. DETEKSI RUSTDESK ---
+    $RustDeskID = ""
+    $RustConfPath = "$env:ProgramData\RustDesk\config\rustdesk.toml"
+    if (Test-Path $RustConfPath) {
+        $RustConf = Get-Content $RustConfPath -ErrorAction SilentlyContinue
+        # Look for id="xxx" or id = "xxx"
+        $IdLine = $RustConf | Where-Object { $_ -match "^\s*id\s*=" } | Select-Object -First 1
+        if ($IdLine) {
+            $RustDeskID = ($IdLine -split '=' | Select-Object -Last 1).Trim().Trim('"').Trim()
+        }
+    }
+    
+    if ($RustDeskID) {
+        $RemoteList += "RustDesk ID: $RustDeskID"
+    }
+    
+    # Format Detail Output
+    if ($RemoteList.Count -gt 0) {
+        $Details = $RemoteList -join " | "
+    } else {
+        $Details = "No remote apps detected."
+    }
+    
+    $Output = "0 `"Remote_Apps`" - Status : OK | $Details"
+    $Output | Out-File -FilePath $CacheFile -Encoding utf8 -Force
 }
 
-$Today = Get-Date$DaysSinceMonday = ([int]$Today.DayOfWeek - [int][DayOfWeek]::Monday + 7) \% 7$ThisMonday = $Today.Date.AddDays(-$DaysSinceMonday)
-
-$NeedUpdateWeekly =$true
-if (Test-Path $WeeklyCache) { 
-    if ((Get-Item $WeeklyCache).LastWriteTime -ge$ThisMonday) { 
-        $NeedUpdateWeekly =$false 
-    } 
-}
-
-if ($NeedUpdateWeekly) {$linesWeekly = [System.Collections.Generic.List[string]]::new()
-    try {
-        $users = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | Where-Object { 
-            $_.Name -notmatch "^(Public\vert{}Default\vert{}Default User\vert{}All Users)$" 
-        }
-        $ANYDESK_ID   = "Not Installed"
-        $RUSTDESK_ID  = "Not Installed"
-        $ANYVIEWER_ID = "Not Installed"
-
-        # 1. AnyDesk
-        $ad_paths = @("$env:ProgramData\AnyDesk\system.conf")
-        foreach ($u in $users) {$ad_paths += "$($u.FullName)\AppData\Roaming\AnyDesk\system.conf" }
-        foreach ($path in$ad_paths) {
-            if (Test-Path $path) {$ad_conf = Get-Content $path -ErrorAction SilentlyContinue$ad_line = $ad_conf \vert{} Where-Object {$_ -match "^ad\.anynet\.id=" }
-                if ($ad_line) { 
-                    $ANYDESK_ID = ($ad_line -split "=")[1].Trim()
-                    break 
-                } 
-            }
-        }
-
-        # 2. RustDesk
-        $rd_exe = @(
-            "$env:ProgramFiles\RustDesk\rustdesk.exe", 
-            "${env:ProgramFiles(x86)}\RustDesk\rustdesk.exe", 
-            "$env:LOCALAPPDATA\Programs\RustDesk\rustdesk.exe"
-        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-        if ($rd_exe) {$cli_out = (& $rd_exe --get-id 2>$null | Out-String).Trim()
-            if ($cli_out -match '^\d{8,15}$') { $RUSTDESK_ID =$cli_out } 
-        }
-
-        if ($RUSTDESK_ID -eq "Not Installed") {
-            $rd_paths = @(
-                "$env:ProgramData\RustDesk\config\RustDesk2.toml", 
-                "$env:ProgramData\RustDesk\config\RustDesk.toml",
-                "$env:ProgramData\RustDesk\config\rustdesk.toml"
-            )
-            foreach ($u in $users) {$rd_paths += "$($u.FullName)\AppData\Roaming\RustDesk\config\RustDesk2.toml"
-                $rd_paths += "$($u.FullName)\AppData\Roaming\RustDesk\config\rustdesk.toml"
-            }
-            foreach ($path in$rd_paths) { 
-                if (Test-Path $path) { 
-                    $content = Get-Content$path -Raw -ErrorAction SilentlyContinue
-                    if ($content -match '(?m)^\s*id\s*=\s*[''"]?(\d{8,15})[''"]?') { 
-                        $RUSTDESK_ID =$matches[1].Trim()
-                        break 
-                    } 
-                } 
-            }
-        }
-
-        # 3. AnyViewer (Registry User, Registry HKLM 32/64-bit, dan Config INI)
-        $hu = Get-ChildItem -Path "Registry::HKEY_USERS" -ErrorAction SilentlyContinue
-        foreach ($h in$hu) { 
-            if ($h.PSChildName -notmatch "_Classes$") {
-                $av_reg = "$($h.PSPath)\SOFTWARE\Aomei\AnyViewer\Option"
-                if (Test-Path $av_reg) { 
-                    $val = Get-ItemPropertyValue -Path$av_reg -Name "DeviceID" -ErrorAction SilentlyContinue
-                    if (-not $val) { $val = Get-ItemPropertyValue -Path$av_reg -Name "ClientID" -ErrorAction SilentlyContinue }
-                    if ($val) { $ANYVIEWER_ID = [string]$val; break } 
-                }
-            }
-        }
-
-        if ($ANYVIEWER_ID -eq "Not Installed") { 
-            $val = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\WOW6432Node\Aomei\AnyViewer\Option" -Name "DeviceID" -ErrorAction SilentlyContinue
-            if (-not $val) {$val = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Aomei\AnyViewer\Option" -Name "DeviceID" -ErrorAction SilentlyContinue }
-            if ($val) { $ANYVIEWER_ID = [string]$val } 
-        }
-
-        if ($ANYVIEWER_ID -eq "Not Installed") {
-            $av_files = @(
-                "$env:ProgramData\AnyViewer\config.ini",
-                "$env:ProgramFiles\AnyViewer\config.ini",
-                "${env:ProgramFiles(x86)}\AnyViewer\config.ini"
-            )
-            foreach ($u in $users) {$av_files += "$($u.FullName)\AppData\Roaming\AnyViewer\config.ini"
-                $av_files += "$($u.FullName)\AppData\Local\AnyViewer\config.ini"
-            }
-            foreach ($f in$av_files) {
-                if (Test-Path $f) {
-                    $c = Get-Content$f -Raw -ErrorAction SilentlyContinue
-                    if ($c -match '(?mi)^\s*(?:DeviceId|cid|ClientID)\s*=\s*([^\r\n]+)') {
-                        $ANYVIEWER_ID =$matches[1].Trim()
-                        break
-                    }
-                }
-            }
-        }
-
-        if ($ANYVIEWER_ID -eq "Not Installed") {
-            if ((Test-Path "$env:ProgramFiles\AnyViewer\AnyViewer.exe") -or (Test-Path "${env:ProgramFiles(x86)}\AnyViewer\AnyViewer.exe") -or (Get-Process -Name "AnyViewer*" -ErrorAction SilentlyContinue)) {
-                $ANYVIEWER_ID = "Installed"
-            }
-        }
-
-        $linesWeekly.Add("0 `"Remote_Apps`" - OK: AnyDesk: $ANYDESK_ID | RustDesk: $RUSTDESK_ID \vert{} AnyViewer:$ANYVIEWER_ID")
-    } catch {}
-
-    Save-CacheAndOutput -FilePath $WeeklyCache -Lines$linesWeekly
-} else { 
-    Read-CacheAndOutput -FilePath $WeeklyCache 
-}
+Get-Content $CacheFile -ErrorAction SilentlyContinue
