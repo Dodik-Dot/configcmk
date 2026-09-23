@@ -189,6 +189,32 @@ foreach ($script in $LocalChecks) {
     }
 }
 
+# =====================================================================
+# DEPLOYMENT OFFICIAL PLUGINS (Inventory & License)
+# =====================================================================
+$PluginDir = "$env:ProgramData\checkmk\agent\plugins"
+if (-not (Test-Path $PluginDir)) {
+    New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null
+}
+
+$OfficialPlugins = @(
+    "mk_inventory.vbs",
+    "win_license.bat"
+)
+
+$RepoPluginBaseUrl = "https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/windows/plugins"
+
+foreach ($plugin in $OfficialPlugins) {
+    $targetPath = Join-Path $PluginDir $plugin
+    $sourceUrl  = "$RepoPluginBaseUrl/$plugin?v=$((Get-Date).Ticks)"
+    try {
+        Write-Host "Mengunduh plugin Checkmk: $plugin..." -ForegroundColor Cyan
+        (New-Object System.Net.WebClient).DownloadFile($sourceUrl, $targetPath)
+    } catch {
+        Write-Host "Gagal mengunduh plugin $plugin : $_" -ForegroundColor Yellow
+    }
+}
+
 # 8. Setup RAM Health (Pengujian Memtester / Memory Diagnostik Asinkron - Setiap Sabtu 11:00)
 Write-Host "[-] Menyiapkan penjadwalan uji kesehatan RAM (Setiap Sabtu 11:00 AM)..." -ForegroundColor Yellow
 
