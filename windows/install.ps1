@@ -188,7 +188,29 @@ foreach ($script in $LocalChecks) {
         Write-Warning "Gagal mengunduh script: $script dari $scriptUrl. Melewati..."
     }
 }
+# 7.1 Unduh Official Plugins (Inventory & Windows License) dari GitHub
+$AgentPluginFolder = "C:\ProgramData\checkmk\agent\plugins"
+if (-not (Test-Path $AgentPluginFolder)) {
+    New-Item -ItemType Directory -Force -Path $AgentPluginFolder | Out-Null
+    Write-Host "[OK] Folder plugins dibuat: $AgentPluginFolder" -ForegroundColor Green
+}
 
+$OfficialPlugins = @(
+    "mk_inventory.vbs",
+    "win_license.bat"
+)
+
+Write-Host "[-] Mengunduh Plugin Resmi Checkmk dari GitHub..." -ForegroundColor Yellow
+foreach ($plugin in $OfficialPlugins) {
+    $pluginUrl = "$BaseUrl/plugins/$plugin"
+    $destination = Join-Path $AgentPluginFolder $plugin
+    try {
+        Invoke-WebRequest -Uri $pluginUrl -OutFile $destination -UseBasicParsing
+        Write-Host " -> [OK] Mengunduh plugin: $plugin" -ForegroundColor Green
+    } catch {
+        Write-Warning "Gagal mengunduh plugin: $plugin dari $pluginUrl. Melewati..."
+    }
+}
 
 # 8. Setup RAM Health (Pengujian Memtester / Memory Diagnostik Asinkron - Setiap Sabtu 11:00)
 Write-Host "[-] Menyiapkan penjadwalan uji kesehatan RAM (Setiap Sabtu 11:00 AM)..." -ForegroundColor Yellow
