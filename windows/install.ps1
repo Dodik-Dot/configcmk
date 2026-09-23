@@ -10,12 +10,12 @@ if (-not $isAdmin) {
     Exit
 }
 
-# 2. Konfigurasi Default & Parser Argumen Manual (Menghindari error 'param' di IEX)
-$ServerIP      = "192.168.1.100"       # Default IP Server Checkmk
-$SiteName      = "cmk"                 # Default Site ID Checkmk Anda
-$AgentVersion  = "2.5.0p9"             # Default Versi Agen Checkmk
-$GithubUser    = "andin1st"            # Username GitHub Anda
-$GithubRepo    = "scriptcmk"           # Nama repositori GitHub Anda
+# 2. Konfigurasi Default & Parser Argumen Manual
+$ServerIP      = "192.168.55.112"       # Default IP Server Checkmk
+$SiteName      = "cmk"                  # Default Site ID Checkmk Anda
+$AgentVersion  = "2.4.0p35-1"           # Default Versi Agen Checkmk
+$GithubUser    = "Dodik-Dot"            # Username GitHub Anda
+$GithubRepo    = "configcmk"            # Nama repositori GitHub Anda
 $Branch        = "main"
 
 # Parsing argumen manual dari $args
