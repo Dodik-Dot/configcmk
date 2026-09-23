@@ -2,30 +2,31 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 $fanSpeed   = 0$sensorName = "Dell EC"
 
-# 1. Baca HWiNFO64 VSB dari seluruh hive HKEY_USERS
-Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue | 
-    Where-Object { $_.Name -notmatch "_Classes$" } | 
-    ForEach-Object {
-        $path = "Registry::" + $_.Name + "\Software\hwinfo64\vsb"
-        if (Test-Path $path) {
-            $props = Get-ItemProperty$path
-            if ($props.ValueRaw15 -and [int]$props.ValueRaw15 -gt 0) {
-                $fanSpeed   = [int]$props.ValueRaw15
-                $sensorName = if ($props.Label15) { "HWiNFO (" + $props.Label15 + ")" } else { "Dell EC" }
-            }
-        }
-    }
-
-# 2. Fallback HKCU
-if ($fanSpeed -eq 0 -and (Test-Path "HKCU:\Software\HWiNFO64\VSB")) {
-    $props = Get-ItemProperty "HKCU:\Software\hwinfo64\vsb"
+# 1. Prioritaskan HKCU dari user yang sedang login aktif
+if (Test-Path "HKCU:\Software\HWiNFO64\VSB") {
+    $props = Get-ItemProperty -Path "HKCU:\Software\HWiNFO64\VSB"
     if ($props.ValueRaw15 -and [int]$props.ValueRaw15 -gt 0) {
         $fanSpeed   = [int]$props.ValueRaw15
-        $sensorName = if ($props.Label15) { "HWiNFO (" + $props.Label15 + ")" } else { "Dell EC" }
+        $sensorName = if ($props.Label15) { "HWiNFO ($($props.Label15))" } else { "Dell EC" }
     }
 }
 
-# 3. Fallback Win32_Fan
+# 2. Jika dijalankan oleh SYSTEM Agent, telusuri hive semua User
+if ($fanSpeed -eq 0) {
+    $userHives = Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue \vert{} Where-Object {$_.Name -notmatch "_Classes$" -and $_.Name -like "S-1-5-21-*" }
+    foreach ($u in $userHives) {$regPath = "Registry::$($u.Name)\Software\HWiNFO64\VSB"
+        if (Test-Path $regPath) {
+            $props = Get-ItemProperty -Path$regPath
+            if ($props.ValueRaw15 -and [int]$props.ValueRaw15 -gt 0) {
+                $fanSpeed   = [int]$props.ValueRaw15
+                $sensorName = if ($props.Label15) { "HWiNFO ($($props.Label15))" } else { "Dell EC" }
+                break
+            }
+        }
+    }
+}
+
+# 3. Fallback CIM/WMI
 if ($fanSpeed -eq 0) {
     Get-CimInstance -ClassName Win32_Fan -ErrorAction SilentlyContinue | ForEach-Object {
         if ($_.DesiredSpeed -and [int]$_.DesiredSpeed -gt 0) {
@@ -35,9 +36,20 @@ if ($fanSpeed -eq 0) {
     }
 }
 
-# 4. Output Local Check Checkmk (Pemisah ~)
+# 4. Evaluasi Kondisi Kipas & Format Output Checkmk
 if ($fanSpeed -gt 0) {
-    Write-Output "0 `"FAN_Health`" fan_speed=${fanSpeed};1000;;0; Status : OK ~ FAN Speed : ${fanSpeed}rpm ~ Sensor:${sensorName} ~ Remark: FAN Condition Good"
+    # Tentukan deskripsi kondisi berdasarkan rentang RPM
+    if ($fanSpeed -ge 5500) {$kondisi = "Maximum / Turbo"
+        $state   = 0   # Ubah ke 1 jika ingin Checkmk memunculkan WARN saat kipas dipaksa turbo
+    } elseif ($fanSpeed -ge 4500) {$kondisi = "High Speed (Heavy Load)"
+        $state   = 0
+    } elseif ($fanSpeed -ge 2500) {$kondisi = "Medium (Active Cooling)"
+        $state   = 0     } else {$kondisi = "Low / Silent (Normal)"
+        $state   = 0
+    }
+
+    # Format: <State> <Service> <PerfData> <Summary Text>
+    Write-Output "$state `"FAN_Health`" fan_speed=${fanSpeed};5500;6000;0;6500 Status: OK - FAN Speed: ${fanSpeed} rpm - Kondisi:$kondisi"
 } else {
-    Write-Output "0 `"FAN_Health`" - Status : OK ~ FAN Speed : 0rpm ~ Remark: Dell EC Controlled (Dynamic/Passive Cooling)"
+    Write-Output "0 `"FAN_Health`" fan_speed=0;5500;6000;0;6500 Status: OK - FAN Speed: 0 rpm - Kondisi: Passive (Idle/Off)"
 }
