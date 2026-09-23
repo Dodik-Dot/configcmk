@@ -169,25 +169,41 @@ if (-not $smartctl -and -not (Test-Path "C:\Program Files\smartmontools\bin\smar
     Write-Host "[OK] smartmontools sudah terpasang di sistem." -ForegroundColor Green
 }
 
-# 2. Cek & Install HWiNFO64 Portable / Installer
+# 2. Cek & Install HWiNFO64 Portable
 $hwinfoPath = "C:\Program Files\HWiNFO64"
 if (-not (Test-Path "$hwinfoPath\HWiNFO64.exe") -and -not (Test-Path "C:\Program Files (x86)\HWiNFO64\HWiNFO64.exe")) {
-    Write-Host " -> HWiNFO64 belum terpasang. Menyiapkan instalasi otomatis..." -ForegroundColor Cyan
+    Write-Host " -> HWiNFO64 belum terpasang. Menyiapkan instalasi portable..." -ForegroundColor Cyan
+    
+    # Coba via winget terlebih dahulu
+    $installed = $false
     try {
         & winget install --id REALiX.HWiNFO -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
+        if (Test-Path "$hwinfoPath\HWiNFO64.exe") { $installed = $true }
     } catch {}
 
-    # Fallback jika winget gagal: Download installer resmi
-    if (-not (Test-Path "$hwinfoPath\HWiNFO64.exe")) {
-        $hwInstaller = "$env:TEMP\hwi_setup.exe"
-        $hwUrl = "https://www.sac.sk/download/utildisk/hwi_804.exe"
-        & curl.exe -s -k -L "$hwUrl" -o "$hwInstaller"
-        if (Test-Path $hwInstaller) {
-            Start-Process -FilePath $hwInstaller -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
-            Remove-Item $hwInstaller -Force -ErrorAction SilentlyContinue
+    # Fallback: Unduh Portable Zip jika winget gagal
+    if (-not $installed) {
+        if (-not (Test-Path $hwinfoPath)) {
+            New-Item -ItemType Directory -Path $hwinfoPath -Force | Out-Null
         }
+        $zipPath = "$env:TEMP\hwinfo.zip"
+        # Mirror direct link HWiNFO Portable
+        $hwUrl = "https://www.fosshub.com/HWiNFO.html?dwl=hwi_804.zip"
+        
+        # Gunakan curl.exe untuk unduh mirror stabil (User-Agent browser agar tidak diblokir)
+        & curl.exe -s -k -L -A "Mozilla/5.0" "https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/windows/tools/hwi_804.zip" -o "$zipPath"
+        
+        # Ekstrak jika file zip valid
+        if ((Test-Path $zipPath) -and ((Get-Item $zipPath).Length -gt 100000)) {
+            Expand-Archive -Path $zipPath -DestinationPath $hwinfoPath -Force
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+            Write-Host "[OK] HWiNFO64 Portable berhasil diekstrak ke $hwinfoPath!" -ForegroundColor Green
+        } else {
+            Write-Warning "Gagal mengunduh binary HWiNFO64."
+        }
+    } else {
+        Write-Host "[OK] HWiNFO64 berhasil dipasang via winget!" -ForegroundColor Green
     }
-    Write-Host "[OK] HWiNFO64 berhasil dipasang!" -ForegroundColor Green
 } else {
     Write-Host "[OK] HWiNFO64 sudah terpasang di sistem." -ForegroundColor Green
 }
