@@ -14,7 +14,7 @@ fi
 # Default variables
 SERVER_IP=""
 SITE_ID="cmk"
-AGENT_VERSION="2.4.0p35-1"
+AGENT_VERSION="2.5.0p14"
 GITHUB_REPO="Dodik-Dot/configcmk"
 GITHUB_BRANCH="main"
 
