@@ -192,23 +192,20 @@ foreach ($script in $LocalChecks) {
 $AgentPluginFolder = "C:\ProgramData\checkmk\agent\plugins"
 if (-not (Test-Path $AgentPluginFolder)) {
     New-Item -ItemType Directory -Force -Path $AgentPluginFolder | Out-Null
-    Write-Host "[OK] Folder plugins dibuat: $AgentPluginFolder" -ForegroundColor Green
 }
 
-$OfficialPlugins = @(
-    "mk_inventory.vbs",
-    "win_license.bat"
-)
+$OfficialPlugins = @("mk_inventory.vbs", "win_license.bat")
 
 Write-Host "[-] Mengunduh Plugin Resmi Checkmk dari GitHub..." -ForegroundColor Yellow
 foreach ($plugin in $OfficialPlugins) {
-    $pluginUrl = "$BaseUrl/plugins/$plugin"
+    $pluginUrl   = "$BaseUrl/plugins/$plugin"
     $destination = Join-Path $AgentPluginFolder $plugin
-    try {
-        Invoke-WebRequest -Uri $pluginUrl -OutFile $destination -UseBasicParsing
+    
+    & curl.exe -s -k -L "$pluginUrl" -o "$destination"
+    if (Test-Path $destination) {
         Write-Host " -> [OK] Mengunduh plugin: $plugin" -ForegroundColor Green
-    } catch {
-        Write-Warning "Gagal mengunduh plugin: $plugin dari $pluginUrl. Melewati..."
+    } else {
+        Write-Warning "Gagal mengunduh plugin: $plugin"
     }
 }
 
