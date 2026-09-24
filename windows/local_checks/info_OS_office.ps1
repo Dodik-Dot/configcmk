@@ -169,6 +169,20 @@ if ($NeedUpdate) {
         $OfficeProducts = [System.Collections.ArrayList]::new()
         $OtherList = [System.Collections.Generic.List[string]]::new()
 
+        function Get-NormalizedOfficeName {
+            param([string]$Name)
+
+            if ([string]::IsNullOrWhiteSpace($Name)) {
+                return ""
+            }
+
+            $n = $Name.ToLowerInvariant()
+            $n = $n -replace '\(v[^\)]*\)', ''
+            $n = $n -replace '[^a-z0-9]+', ' '
+            $n = ($n -replace '\s+', ' ').Trim()
+            return $n
+        }
+
         function Add-OfficeProduct {
             param(
                 [string]$Name,
@@ -181,15 +195,45 @@ if ($NeedUpdate) {
                 return
             }
 
-            $family = Get-OfficeFamily $IdentityText
-            $year = Get-OfficeYear $IdentityText
-            $edition = Get-OfficeEdition $IdentityText
+            # IdentityText WAJIB memuat nama yang sudah dinormalisasi.
+            # Ini penting karena DisplayName registry kadang hanya "Microsoft Excel LTSC"
+            # tanpa tahun, sementara cleanName sudah menjadi "Microsoft Excel 2024 LTSC".
+            $identity = "$Name $IdentityText"
 
-            # Kunci deduplikasi.
+            $family = Get-OfficeFamily $identity
+            $year = Get-OfficeYear $identity
+            $edition = Get-OfficeEdition $identity
+            $normalizedName = Get-NormalizedOfficeName $Name
+
+            # Kunci utama.
             $key = "$family|$year|$edition"
 
+            # Deduplikasi berlapis:
+            # 1. Nama produk sama (C2R vs Registry) -> produk yang sama.
+            # 2. family + year + edition sama -> produk yang sama.
+            # 3. family + year sama dan family bukan "office" generik -> produk yang sama.
+            #
+            # Dengan cara ini:
+            # - Excel 2024 dari C2R + Registry TIDAK dobel.
+            # - Office 2010 + Excel 2024 tetap dianggap dua produk berbeda.
             $existing = $OfficeProducts | Where-Object {
-                $_.Key -eq $key
+                $sameName = (Get-NormalizedOfficeName $_.Name) -eq $normalizedName
+
+                $sameIdentity = (
+                    $_.Family -eq $family -and
+                    $_.Year -eq $year -and
+                    $_.Edition -eq $edition -and
+                    -not [string]::IsNullOrWhiteSpace($year)
+                )
+
+                $sameStandaloneFamilyYear = (
+                    $_.Family -eq $family -and
+                    $_.Year -eq $year -and
+                    $family -ne 'office' -and
+                    -not [string]::IsNullOrWhiteSpace($year)
+                )
+
+                $sameName -or $sameIdentity -or $sameStandaloneFamilyYear
             } | Select-Object -First 1
 
             if ($existing) {
@@ -198,11 +242,24 @@ if ($NeedUpdate) {
                     $existing.Version = $Version
                 }
 
-                # Prioritaskan nama C2R yang sudah dinormalisasi.
+                # Untuk produk yang sama, C2R lebih dipercaya untuk nama/versi modern.
                 if ($Source -eq 'C2R') {
                     $existing.Name = $Name
+                    if ($Version) {
+                        $existing.Version = $Version
+                    }
                     $existing.Source = $Source
                 }
+
+                # Isi metadata yang sebelumnya kosong.
+                if ([string]::IsNullOrWhiteSpace($existing.Year) -and $year) {
+                    $existing.Year = $year
+                }
+                if ([string]::IsNullOrWhiteSpace($existing.Edition) -and $edition) {
+                    $existing.Edition = $edition
+                }
+
+                $existing.Key = "$($existing.Family)|$($existing.Year)|$($existing.Edition)"
                 return
             }
 
@@ -317,7 +374,7 @@ if ($NeedUpdate) {
                 Add-OfficeProduct `
                     -Name $cleanName `
                     -Version $dv `
-                    -IdentityText "$dn $dv" `
+                    -IdentityText "$cleanName $dn $dv" `
                     -Source 'Registry'
             }
             elseif ($dn -match "^LibreOffice") {
@@ -493,6 +550,42 @@ if ($NeedUpdate) {
                 }
             }
         }
+
+        # -----------------------------------------------------------------
+        # D2. Final safety dedupe
+        # -----------------------------------------------------------------
+        # Jaga-jaga jika vendor/registry memberikan entri identik dari beberapa hive.
+        # Hanya hapus produk dengan nama normalisasi + versi yang sama.
+        $UniqueProducts = [System.Collections.ArrayList]::new()
+        $SeenProducts = @{}
+
+        foreach ($p in $OfficeProducts) {
+            $displayKey = "$(Get-NormalizedOfficeName $p.Name)|$($p.Version)"
+
+            if (-not $SeenProducts.ContainsKey($displayKey)) {
+                $SeenProducts[$displayKey] = $true
+                [void]$UniqueProducts.Add($p)
+            } else {
+                $existing = $UniqueProducts | Where-Object {
+                    "$(Get-NormalizedOfficeName $_.Name)|$($_.Version)" -eq $displayKey
+                } | Select-Object -First 1
+
+                if ($existing) {
+                    # Jika salah satu duplikat punya license dan satunya tidak,
+                    # pertahankan informasi license yang valid.
+                    if (
+                        [string]::IsNullOrWhiteSpace($existing.LicenseStatus) -and
+                        -not [string]::IsNullOrWhiteSpace($p.LicenseStatus)
+                    ) {
+                        $existing.LicenseStatus = $p.LicenseStatus
+                        $existing.LicenseKey = $p.LicenseKey
+                        $existing.LicenseName = $p.LicenseName
+                    }
+                }
+            }
+        }
+
+        $OfficeProducts = $UniqueProducts
 
         # -----------------------------------------------------------------
         # E. Format output akhir.
