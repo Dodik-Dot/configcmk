@@ -1,4 +1,6 @@
-# cmkagent v1.3.1 - Hybrid Preview
+# cmkagent v1.3.2 - Hybrid Preview
+
+> **Compile fix:** v1.3.2 removes a non-public `WifiInfo.INVALID_RSSI` reference so the project compiles cleanly with Android SDK 35. Wi-Fi validation now uses a local RSSI range check (`-126..0 dBm`).
 
 Native Android monitoring agent for Checkmk Community.
 
@@ -55,7 +57,7 @@ For production use HTTPS. HTTP is enabled in this preview only so the transport 
 
 ## Checkmk services
 
-The existing Android metrics remain, and v1.3.1 adds:
+The existing Android metrics remain, and v1.3.2 adds:
 
 - `Transport_Status`
 
@@ -70,7 +72,7 @@ The existing Android metrics remain, and v1.3.1 adds:
 
 ## Compact UI
 
-The accordion/dropdown UI from v1.2.0 remains. v1.3.1 adds a separate **HYBRID TRANSPORT** card.
+The accordion/dropdown UI from v1.2.0 remains. v1.3.2 adds a separate **HYBRID TRANSPORT** card.
 
 Cards:
 
@@ -116,8 +118,8 @@ A push affecting `android/**` starts the workflow automatically.
 Artifact:
 
 ```text
-cmkagent-v1.3.1-debug
-└── cmkagent-v1.3.1-debug.apk
+cmkagent-v1.3.2-debug
+└── cmkagent-v1.3.2-debug.apk
 ```
 
 ## Security notes

@@ -357,7 +357,7 @@ public final class DeviceMetrics {
         }
 
         int rssi = info.getRssi();
-        if (rssi != WifiInfo.INVALID_RSSI && rssi <= 0 && rssi >= -127) {
+        if (isUsableRssi(rssi)) {
             out.rssi = rssi;
         }
 
@@ -373,7 +373,7 @@ public final class DeviceMetrics {
     private static boolean hasUsefulWifiInfo(WifiInfo info) {
         if (info == null) return false;
         int rssi = info.getRssi();
-        if (rssi != WifiInfo.INVALID_RSSI && rssi <= 0 && rssi >= -127) return true;
+        if (isUsableRssi(rssi)) return true;
         if (info.getLinkSpeed() > 0) return true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && info.getFrequency() > 0) return true;
         String ssid = info.getSSID();
@@ -442,6 +442,12 @@ public final class DeviceMetrics {
         String joined = (safe(Build.MANUFACTURER) + " " + safe(Build.MODEL) + " "
                 + safe(Build.PRODUCT)).toUpperCase(Locale.US);
         return joined.contains("NEWLAND") && joined.contains("MT93") || joined.contains("MT93");
+    }
+
+    private static boolean isUsableRssi(int rssi) {
+        // Android uses -127 dBm as the common invalid/unknown RSSI sentinel.
+        // Avoid WifiInfo.INVALID_RSSI because it is not part of the public SDK on all compile SDKs.
+        return rssi > -127 && rssi <= 0;
     }
 
     private static boolean validBatteryProperty(int value) {
