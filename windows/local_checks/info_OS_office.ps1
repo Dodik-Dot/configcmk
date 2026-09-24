@@ -201,14 +201,50 @@ if ($NeedUpdate) {
         }
 
         # D. Format Output Akhir Checkmk
-        $TotalOffice = [System.Collections.Generic.List[string]]::new()
-        foreach ($o in $OfficeList) { $TotalOffice.Add($o) }
-        foreach ($ot in $OtherList) { $TotalOffice.Add($ot) }
+        # Format yang diinginkan:
+        # OK - Product: Microsoft Excel 2024 LTSC (v16.x) LICENSED | ❘ License: (Key: XXXXX) + LibreOffice x.x.x.x
 
-        if ($TotalOffice.Count -gt 0) {
-            $ProductString = $TotalOffice -join " + "
-            $LicenseString = if ($AllLicenses.Count -gt 0) { $AllLicenses -join " + " } else { "N/A" }
-            $Lines.Add("0 `"Info_Office`" - OK - Product: $ProductString | License: $LicenseString")
+        if ($OfficeList.Count -gt 0 -or $OtherList.Count -gt 0) {
+            $MicrosoftProductString = if ($OfficeList.Count -gt 0) { $OfficeList -join " + " } else { "" }
+            $OtherProductString = if ($OtherList.Count -gt 0) { $OtherList -join " + " } else { "" }
+
+            # Ambil status lisensi dan key pertama yang ditemukan dari OSPP.VBS
+            $LicenseStatusText = "N/A"
+            $LicenseKeyText = ""
+
+            if ($AllLicenses.Count -gt 0) {
+                $FirstLicense = $AllLicenses[0]
+                if ($FirstLicense -match '^(.+?)\s+\(Key:\s*(.+?)\)$') {
+                    $LicenseStatusText = $Matches[1].Trim()
+                    $LicenseKeyText = $Matches[2].Trim()
+                } else {
+                    $LicenseStatusText = $FirstLicense.Trim()
+                }
+            }
+
+            # Susun summary sesuai format tampilan yang diminta
+            if ($MicrosoftProductString) {
+                $Summary = "0 `"Info_Office`" - OK - Product: $MicrosoftProductString"
+
+                if ($LicenseStatusText -and $LicenseStatusText -ne "N/A") {
+                    $Summary += " $LicenseStatusText"
+                }
+
+                $Summary += " | ❘ License:"
+
+                if ($LicenseKeyText) {
+                    $Summary += " (Key: $LicenseKeyText)"
+                }
+
+                if ($OtherProductString) {
+                    $Summary += " + $OtherProductString"
+                }
+
+                $Lines.Add($Summary)
+            } else {
+                # Jika hanya LibreOffice/WPS yang terpasang
+                $Lines.Add("0 `"Info_Office`" - OK - Product: $OtherProductString | ❘ License: N/A")
+            }
         } else {
             $Lines.Add("0 `"Info_Office`" - OK - Product: Tidak ada aplikasi Office (Native Windows) | Status: OK")
         }
