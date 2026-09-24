@@ -24,20 +24,34 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Show Android SDK
+      - name: Locate sdkmanager
+        id: sdk
+        shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          sdkmanager --version
+          SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found"
+            find "$ANDROID_SDK_ROOT" -maxdepth 4 -type f -name sdkmanager || true
+            exit 1
+          fi
+
+          echo "Found sdkmanager: $SDKMANAGER"
+          echo "sdkmanager=$SDKMANAGER" >> "$GITHUB_OUTPUT"
 
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
+        shell: bash
+        run: |
+          yes | "${{ steps.sdk.outputs.sdkmanager }}" --licenses || true
 
       - name: Install Android SDK 35
+        shell: bash
         run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          "${{ steps.sdk.outputs.sdkmanager }}" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
