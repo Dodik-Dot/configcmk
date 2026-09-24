@@ -8,7 +8,7 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class CheckmkOutput {
-    public static final String VERSION = "1.1.0";
+    public static final String VERSION = "1.3.1";
 
     private CheckmkOutput() {}
 
@@ -27,6 +27,7 @@ public final class CheckmkOutput {
         sb.append("Hostname: ").append(AgentConfig.getHostname(context)).append("\n\n");
         sb.append("<<<local:sep(0)>>>\n");
         sb.append(buildAgentStatusLine(context, stats)).append('\n');
+        sb.append(buildTransportStatusLine(context, stats)).append('\n');
         sb.append(buildBatteryLevelLine(battery)).append('\n');
         sb.append(buildBatteryHealthLine(battery)).append('\n');
         sb.append(buildBatteryTemperatureLine(battery)).append('\n');
@@ -52,7 +53,43 @@ public final class CheckmkOutput {
                 + " | Last Pull : " + lastPull + " (" + age + ")"
                 + " | Last Client : " + s.lastClient
                 + " | Allowed Server : " + allow
-                + " | Collection : On-demand pull";
+                + " | Collection : Hybrid (pull primary + push backup)";
+    }
+
+    private static String buildTransportStatusLine(Context context, AgentStats.Snapshot s) {
+        String endpoint = AgentConfig.getPushUrl(context);
+        boolean configured = AgentConfig.isPushConfigured(context);
+        int state = 0;
+        String status;
+        if (!configured) {
+            status = "Push backup not configured";
+        } else if (s.lastPushMs <= 0) {
+            state = 1;
+            status = "Push backup configured, waiting for first delivery";
+        } else if (s.lastPushOk) {
+            status = "Push backup healthy";
+        } else {
+            state = 1;
+            status = "Push backup last delivery failed";
+        }
+
+        String lastPush = s.lastPushMs > 0 ? formatDate(s.lastPushMs) : "N/A";
+        String age = s.lastPushMs > 0
+                ? formatDuration(Math.max(0, System.currentTimeMillis() - s.lastPushMs)) + " ago"
+                : "N/A";
+        String safeEndpoint = endpoint.isEmpty() ? "Not configured" : endpoint;
+
+        return state + " \"Transport_Status\" push_success=" + s.pushSuccesses
+                + "|push_failure=" + s.pushFailures
+                + " Status : " + stateName(state)
+                + " | Primary : PULL TCP/" + AgentConfig.getPort(context)
+                + " | Backup : PUSH HTTP(S)"
+                + " | Receiver : " + safeEndpoint
+                + " | Push Interval : " + AgentConfig.getPushIntervalSec(context) + " sec"
+                + " | Last Push : " + lastPush + " (" + age + ")"
+                + " | Last Push Result : " + status
+                + " | HTTP Code : " + (s.lastPushCode > 0 ? s.lastPushCode : "N/A")
+                + " | Detail : " + s.lastPushMessage;
     }
 
     private static String buildBatteryLevelLine(DeviceMetrics.BatteryInfo b) {
@@ -165,7 +202,8 @@ public final class CheckmkOutput {
                 + " | Signal : " + rssi
                 + " | Link Speed : " + speed
                 + " | Frequency : " + freq
-                + " | IP : " + w.ip;
+                + " | IP : " + w.ip
+                + " | Detection : " + w.detectionSource;
     }
 
     private static String buildAndroidInfoLine(DeviceMetrics.DeviceInfo d) {

@@ -12,6 +12,7 @@
 
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:icon="@drawable/ic_cmkagent"
         android:roundIcon="@drawable/ic_cmkagent"
         android:label="cmkagent"

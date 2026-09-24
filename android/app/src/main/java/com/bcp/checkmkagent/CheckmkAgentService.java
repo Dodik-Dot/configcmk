@@ -17,6 +17,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class CheckmkAgentService extends Service {
     public static final String CHANNEL_ID = "cmkagent_service";
@@ -24,7 +26,8 @@ public class CheckmkAgentService extends Service {
 
     private volatile boolean running = false;
     private ServerSocket serverSocket;
-    private ExecutorService executor;
+    private ExecutorService listenerExecutor;
+    private ScheduledExecutorService pushExecutor;
 
     @Override
     public void onCreate() {
@@ -34,23 +37,28 @@ public class CheckmkAgentService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        startForeground(NOTIFICATION_ID, buildNotification("Starting agent..."));
-        startListenerIfNeeded();
+        startForeground(NOTIFICATION_ID, buildNotification("Starting hybrid agent..."));
+        startHybridIfNeeded();
         return START_STICKY;
     }
 
-    private synchronized void startListenerIfNeeded() {
+    private synchronized void startHybridIfNeeded() {
         if (running) return;
         running = true;
         AgentStats.recordStart(this);
-        executor = Executors.newSingleThreadExecutor();
-        executor.execute(() -> {
+        startPullListener();
+        startPushScheduler();
+    }
+
+    private void startPullListener() {
+        listenerExecutor = Executors.newSingleThreadExecutor();
+        listenerExecutor.execute(() -> {
             int port = AgentConfig.getPort(this);
             try {
                 serverSocket = new ServerSocket();
                 serverSocket.setReuseAddress(true);
                 serverSocket.bind(new InetSocketAddress("0.0.0.0", port));
-                updateNotification("Listening on TCP " + port);
+                updateNotification(notificationSummary());
 
                 while (running) {
                     try {
@@ -58,16 +66,29 @@ public class CheckmkAgentService extends Service {
                         client.setSoTimeout(5000);
                         serveClient(client);
                     } catch (Exception e) {
-                        if (running) updateNotification("Client error: " + shortMessage(e));
+                        if (running) updateNotification("Pull error: " + shortMessage(e));
                     }
                 }
             } catch (Exception e) {
-                updateNotification("Agent error: " + shortMessage(e));
+                updateNotification("Pull listener error: " + shortMessage(e));
             } finally {
-                running = false;
                 closeServerSocket();
             }
         });
+    }
+
+    private void startPushScheduler() {
+        pushExecutor = Executors.newSingleThreadScheduledExecutor();
+        int interval = AgentConfig.getPushIntervalSec(this);
+        pushExecutor.scheduleWithFixedDelay(() -> {
+            if (!running || !AgentConfig.isPushConfigured(this)) return;
+            PushClient.Result result = PushClient.pushNow(this);
+            if (running) {
+                updateNotification(result.ok
+                        ? notificationSummary()
+                        : "Pull primary active • Push backup failed: " + shortText(result.message));
+            }
+        }, 8, interval, TimeUnit.SECONDS);
     }
 
     private void serveClient(Socket client) {
@@ -86,6 +107,7 @@ public class CheckmkAgentService extends Service {
                      new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
             writer.write(CheckmkOutput.build(this));
             writer.flush();
+            updateNotification(notificationSummary());
         } catch (Exception ignored) {}
     }
 
@@ -94,8 +116,16 @@ public class CheckmkAgentService extends Service {
         running = false;
         AgentStats.recordStop(this);
         closeServerSocket();
-        if (executor != null) executor.shutdownNow();
+        if (listenerExecutor != null) listenerExecutor.shutdownNow();
+        if (pushExecutor != null) pushExecutor.shutdownNow();
         super.onDestroy();
+    }
+
+    private String notificationSummary() {
+        String push = AgentConfig.isPushConfigured(this)
+                ? "Push " + AgentConfig.getPushIntervalSec(this) + "s"
+                : "Push not configured";
+        return "Hybrid • Pull TCP " + AgentConfig.getPort(this) + " primary • " + push;
     }
 
     private void closeServerSocket() {
@@ -110,10 +140,10 @@ public class CheckmkAgentService extends Service {
             if (nm != null) {
                 NotificationChannel channel = new NotificationChannel(
                         CHANNEL_ID,
-                        "cmkagent service",
+                        "cmkagent hybrid service",
                         NotificationManager.IMPORTANCE_LOW
                 );
-                channel.setDescription("Checkmk Android pull agent on TCP 6556");
+                channel.setDescription("Checkmk Android hybrid agent: pull primary and push backup");
                 nm.createNotificationChannel(channel);
             }
         }
@@ -131,7 +161,7 @@ public class CheckmkAgentService extends Service {
                 : new Notification.Builder(this);
 
         return builder
-                .setContentTitle("cmkagent")
+                .setContentTitle("cmkagent hybrid")
                 .setContentText(text)
                 .setSmallIcon(R.drawable.ic_stat_cmkagent)
                 .setContentIntent(pi)
@@ -147,6 +177,12 @@ public class CheckmkAgentService extends Service {
     private static String shortMessage(Exception e) {
         String m = e.getMessage();
         return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
+    }
+
+    private static String shortText(String value) {
+        if (value == null || value.trim().isEmpty()) return "unknown";
+        String clean = value.trim().replace('\n', ' ').replace('\r', ' ');
+        return clean.length() > 70 ? clean.substring(0, 70) : clean;
     }
 
     @Override

@@ -13,6 +13,10 @@ public final class AgentConfig {
     private static final String KEY_DESIGN_CAPACITY = "design_capacity_mah";
     private static final String KEY_AUTOSTART = "autostart";
     private static final String KEY_ALLOWED_SERVER = "allowed_server";
+    private static final String KEY_PUSH_ENABLED = "push_enabled";
+    private static final String KEY_PUSH_URL = "push_url";
+    private static final String KEY_PUSH_TOKEN = "push_token";
+    private static final String KEY_PUSH_INTERVAL_SEC = "push_interval_sec";
 
     private AgentConfig() {}
 
@@ -62,9 +66,39 @@ public final class AgentConfig {
         return false;
     }
 
+    public static boolean isPushEnabled(Context context) {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_PUSH_ENABLED, true);
+    }
+
+    public static String getPushUrl(Context context) {
+        String value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_PUSH_URL, "");
+        return value == null ? "" : value.trim();
+    }
+
+    public static String getPushToken(Context context) {
+        String value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_PUSH_TOKEN, "");
+        return value == null ? "" : value.trim();
+    }
+
+    public static int getPushIntervalSec(Context context) {
+        int value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(KEY_PUSH_INTERVAL_SEC, 300);
+        if (value < 60) return 60;
+        if (value > 86400) return 86400;
+        return value;
+    }
+
+    public static boolean isPushConfigured(Context context) {
+        return isPushEnabled(context) && !getPushUrl(context).isEmpty();
+    }
+
     public static void save(Context context, String hostname, int port,
                             double designCapacityMah, boolean autoStart,
-                            String allowedServer) {
+                            String allowedServer, boolean pushEnabled,
+                            String pushUrl, String pushToken, int pushIntervalSec) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_HOSTNAME, sanitizeHostname(hostname))
@@ -73,6 +107,10 @@ public final class AgentConfig {
                         Double.doubleToRawLongBits(Math.max(0.0, designCapacityMah)))
                 .putBoolean(KEY_AUTOSTART, autoStart)
                 .putString(KEY_ALLOWED_SERVER, allowedServer == null ? "" : allowedServer.trim())
+                .putBoolean(KEY_PUSH_ENABLED, pushEnabled)
+                .putString(KEY_PUSH_URL, pushUrl == null ? "" : pushUrl.trim())
+                .putString(KEY_PUSH_TOKEN, pushToken == null ? "" : pushToken.trim())
+                .putInt(KEY_PUSH_INTERVAL_SEC, Math.max(60, Math.min(86400, pushIntervalSec)))
                 .apply();
     }
 

@@ -1,77 +1,147 @@
-# cmkagent v1.1.0
+# cmkagent v1.3.1 - Hybrid Preview
 
-Custom Android pull agent for Checkmk Community.
+Native Android monitoring agent for Checkmk Community.
 
 - Package: `com.bcp.checkmkagent`
 - App name: `cmkagent`
-- Pull port: TCP `6556`
-- Target device: Newland MT93 WMS PDA (also works on generic Android devices)
-- Checkmk server in the current environment: `192.168.55.112`
+- Version: `1.3.0`
+- Build: Java 17 + Android SDK + Gradle
+- Primary transport: Checkmk PULL over TCP/6556
+- Backup transport: HTTP/HTTPS PUSH to a configurable receiver
+- Target production PDA: Newland MT93 (generic Android also supported)
 
-## v1.1 highlights
+## Hybrid behavior
 
-- Redesigned dark dashboard UI for warehouse/PDA usage.
-- New original CMK monitoring icon.
-- Foreground listener with boot autostart.
-- Optional source-IP allowlist for the Checkmk server.
-- Newland MT93 profile: fallback design capacity `5000 mAh` when Android/vendor data is unavailable.
-- Battery full-capacity estimate is smoothed using a rolling median of recent valid samples.
-- Diagnostic counters for accepted/rejected pulls.
-- No WMS application inspection in this version.
+`cmkagent` keeps the normal Checkmk Community pull listener running on TCP/6556. Pull remains the primary monitoring path.
+
+When PUSH backup is enabled and a receiver URL is configured, the foreground service also sends the same Checkmk agent output periodically to the receiver. The receiver therefore keeps a warm copy of the most recent agent data.
+
+```text
+Checkmk Community ---- PULL TCP/6556 ----> Android cmkagent
+                                             |
+                                             +---- PUSH HTTP(S) ----> receiver cache
+```
+
+The Android app does not decide when Checkmk should use the backup. The future server-side data source program will implement:
+
+1. try PULL first;
+2. if PULL fails, read the most recent PUSH cache;
+3. if both are unavailable/stale, report the host as unavailable.
+
+## Android settings
+
+The Settings card now includes:
+
+- Hostname
+- Pull TCP port (default 6556)
+- Allowed Checkmk server IP
+- Battery design capacity
+- Enable PUSH backup
+- Push Receiver URL
+- Push Token
+- Push Interval (minimum 60 seconds; default 120)
+- Auto start after boot
+- TEST PUSH NOW button
+
+Recommended test configuration for the current OMV server:
+
+```text
+Allowed Checkmk Server IP : 192.168.55.112
+Push Receiver URL          : http://192.168.55.112:18080/api/v1/agent
+Push Interval              : 120
+```
+
+For production use HTTPS. HTTP is enabled in this preview only so the transport can be tested quickly inside the internal LAN.
 
 ## Checkmk services
 
-| Service | Warning | Critical |
-|---|---:|---:|
-| `Battery_Level` | < 30% | < 15% |
-| `Health_Battery` | < 75% estimated health | < 60% |
-| `Battery_Temperature` | >= 42 C | >= 48 C |
-| `Battery_Voltage` | informational | informational |
-| `Battery_Current` | informational | informational |
-| `RAM_Usage` | >= 85% | >= 95% |
-| `Storage_Usage` | >= 85% | >= 95% |
-| `WiFi_Status` | <= -68 dBm | <= -75 dBm |
-| `Android_Info` | informational | informational |
-| `Agent_Status` | informational / diagnostics | informational |
+The existing Android metrics remain, and v1.3.1 adds:
 
-## Collection schedule
+- `Transport_Status`
 
-The APK does **not** run a continuous metrics polling loop. It waits on TCP 6556 and collects metrics only when Checkmk connects.
+`Transport_Status` shows:
 
-Recommended Checkmk monitoring interval for WMS PDA devices: **60 seconds**.
+- PULL primary port
+- PUSH receiver
+- push interval
+- last push timestamp
+- last HTTP response code
+- push successes/failures
 
-This gives near-real-time battery/Wi-Fi visibility without having the Android app scan continuously in the background.
+## Compact UI
 
-## Production settings for the WMS network
+The accordion/dropdown UI from v1.2.0 remains. v1.3.1 adds a separate **HYBRID TRANSPORT** card.
 
-Example:
+Cards:
 
-- Hostname: `PDA-10-FAUZI`
-- Port: `6556`
-- Design capacity: `0` (auto; MT93 falls back to 5000 mAh)
-- Allowed Checkmk Server IP: `192.168.55.112`
-- Start after boot: enabled
+- AGENT
+- HYBRID TRANSPORT
+- BATTERY
+- SYSTEM
+- NETWORK
+- DEVICE
+- SETTINGS
+- DIAGNOSTICS
 
-Leave `Allowed Checkmk Server IP` empty during ad-hoc testing if the test client is not the Checkmk server. For production, set it to `192.168.55.112`.
+## Test receiver
 
-## Build APK with GitHub Actions
+The ZIP includes `server-test/receiver.py`, a Python standard-library test endpoint. It is only for testing Android PUSH and does not yet integrate the cache into Checkmk.
 
-Open:
-
-`Actions -> Build cmkagent APK -> Run workflow`
-
-After the workflow succeeds, download artifact `cmkagent-debug`. Extract it to get `cmkagent-debug.apk`.
-
-## Test
-
-From the Checkmk host/container:
+On the OMV host:
 
 ```bash
-nc <PDA_IP> 6556
+python3 receiver.py \
+  --listen 0.0.0.0 \
+  --port 18080 \
+  --data-dir ./push-cache \
+  --token cmk-test-token
 ```
 
-The output contains `<<<check_mk>>>` and `<<<local:sep(0)>>>` sections with the services above.
+Then configure the APK:
 
-## Battery health note
+```text
+Push Receiver URL : http://192.168.55.112:18080/api/v1/agent
+Push Token        : cmk-test-token
+Push Interval     : 120
+```
 
-`Estimated Full Capacity` and `Estimated Health` are estimates when the Android device does not expose a hardware `charge_full` value. The app explicitly reports the source of design/full capacity. On Newland MT93, the app uses a 5000 mAh device-profile fallback only if Android/vendor values are unavailable.
+Tap **TEST PUSH NOW**. HTTP 200 indicates the push transport works.
+
+## Build using GitHub Actions
+
+Copy/replace the `android/` folder and `.github/workflows/build-cmkagent.yml` in the `configcmk` repository.
+
+A push affecting `android/**` starts the workflow automatically.
+
+Artifact:
+
+```text
+cmkagent-v1.3.1-debug
+└── cmkagent-v1.3.1-debug.apk
+```
+
+## Security notes
+
+This is a hybrid preview build for an internal test network.
+
+- Pull access can be restricted to `192.168.55.112`.
+- Push supports Bearer token authentication.
+- The token is currently stored in Android SharedPreferences; production hardening can move it to Android Keystore.
+- Prefer HTTPS in production.
+- The test receiver is not a production service.
+
+
+## Rekomendasi Resource dan Interval
+
+- Pull tetap primary, mengikuti interval Checkmk (umumnya sekitar 60 detik).
+- Push backup default 300 detik untuk mengurangi wake-up jaringan pada PDA yang dipakai sepanjang hari.
+- Listener TCP menggunakan blocking `ServerSocket.accept()` sehingga hampir tidak memakai CPU saat idle.
+- Aplikasi tidak melakukan scanning berat terus-menerus; metrik dibaca saat pull atau saat jadwal push.
+- Untuk Newland MT93 4 GB RAM, verifikasi penggunaan aktual dengan Android Settings atau `adb shell dumpsys meminfo com.bcp.checkmkagent`.
+
+## UI
+
+Semua section memakai accordion/dropdown dan default dalam kondisi collapsed agar layar tidak terlalu panjang. Tekan section untuk membuka detail.
+
+---
+**Dibuat oleh IT OPS HQEJBNT**

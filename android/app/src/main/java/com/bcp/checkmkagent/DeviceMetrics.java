@@ -4,6 +4,11 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.ConnectivityManager;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
@@ -56,6 +61,8 @@ public final class DeviceMetrics {
         public int rssi = Integer.MIN_VALUE;
         public int linkSpeedMbps = -1;
         public int frequencyMhz = -1;
+        public String detectionSource = "Unavailable";
+        public String detailsSource = "Unavailable";
     }
 
     public static final class DeviceInfo {
@@ -148,22 +155,47 @@ public final class DeviceMetrics {
             }
         }
 
-        double full = readChargeCapacityMah("/sys/class/power_supply/battery/charge_full");
-        if (isPositive(full)) {
-            out.fullCapacityMah = full;
-            out.fullCapacitySource = "Kernel charge_full";
-        } else {
-            full = readEnergyCapacityMah("/sys/class/power_supply/battery/energy_full", out.voltageV);
+        // Try several vendor/kernel locations. Different Android devices expose battery fuel-gauge
+        // information in different power_supply nodes. All accesses are best-effort and require no root.
+        String[] fullPaths = {
+                "/sys/class/power_supply/battery/charge_full",
+                "/sys/class/power_supply/bms/charge_full",
+                "/sys/class/power_supply/main/charge_full"
+        };
+        for (String path : fullPaths) {
+            double full = readChargeCapacityMah(path);
             if (isPositive(full)) {
                 out.fullCapacityMah = full;
-                out.fullCapacitySource = "Kernel energy_full";
+                out.fullCapacitySource = "Kernel " + path.substring(path.lastIndexOf('/') + 1);
+                break;
+            }
+        }
+        if (!isPositive(out.fullCapacityMah)) {
+            String[] energyPaths = {
+                    "/sys/class/power_supply/battery/energy_full",
+                    "/sys/class/power_supply/bms/energy_full"
+            };
+            for (String path : energyPaths) {
+                double full = readEnergyCapacityMah(path, out.voltageV);
+                if (isPositive(full)) {
+                    out.fullCapacityMah = full;
+                    out.fullCapacitySource = "Kernel " + path.substring(path.lastIndexOf('/') + 1);
+                    break;
+                }
             }
         }
 
-        // Fallback estimate. Mid-charge samples are typically more useful than samples near 0/100%.
+        // Fallback estimate using BatteryManager charge counter. Android does not provide a public
+        // full-charge-capacity API on every device. We collect samples only while the battery is not
+        // actively charging and smooth them using a rolling median. v1.1.1 also accepts near-full
+        // discharging samples (e.g. 97%), which fixes N/A on modern Xiaomi/POCO devices.
+        boolean stableState = "Discharging".equals(out.status)
+                || "Not Charging".equals(out.status)
+                || "Full".equals(out.status);
         if (!isPositive(out.fullCapacityMah)
                 && isPositive(out.chargeCounterMah)
-                && out.level >= 20 && out.level <= 95) {
+                && out.level >= 15 && out.level <= 100
+                && stableState) {
             double estimate = out.chargeCounterMah / (out.level / 100.0);
             boolean plausible = !isPositive(out.designCapacityMah)
                     || (estimate >= out.designCapacityMah * 0.30
@@ -211,32 +243,173 @@ public final class DeviceMetrics {
     public static WifiStatus readWifi(Context context) {
         WifiStatus out = new WifiStatus();
         out.ip = getLocalIpv4();
-        try {
-            WifiManager manager = (WifiManager) context.getApplicationContext()
-                    .getSystemService(Context.WIFI_SERVICE);
-            if (manager == null || !manager.isWifiEnabled()) return out;
-            WifiInfo info = manager.getConnectionInfo();
-            if (info == null || info.getNetworkId() == -1) return out;
 
-            out.connected = true;
-            String ssid = info.getSSID();
-            if (ssid != null && !ssid.isEmpty() && !"<unknown ssid>".equalsIgnoreCase(ssid)) {
-                if (ssid.startsWith("\"") && ssid.endsWith("\"") && ssid.length() >= 2) {
-                    ssid = ssid.substring(1, ssid.length() - 1);
+        WifiManager wm = null;
+        try {
+            wm = (WifiManager) context.getApplicationContext()
+                    .getSystemService(Context.WIFI_SERVICE);
+            ConnectivityManager cm = (ConnectivityManager) context
+                    .getSystemService(Context.CONNECTIVITY_SERVICE);
+
+            Network wifiNetwork = null;
+            NetworkCapabilities wifiCaps = null;
+
+            // The default/active network is not always Wi-Fi (VPN, mobile data, vendor routing).
+            // Enumerate every network and pick an actual Wi-Fi transport instead.
+            if (cm != null) {
+                Network[] networks = cm.getAllNetworks();
+                if (networks != null) {
+                    for (Network network : networks) {
+                        NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+                        if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                            wifiNetwork = network;
+                            wifiCaps = caps;
+                            break;
+                        }
+                    }
                 }
-                out.ssid = ssid;
-            } else {
-                out.ssid = "Connected (SSID permission unavailable)";
             }
-            out.rssi = info.getRssi();
-            out.linkSpeedMbps = info.getLinkSpeed();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                out.frequencyMhz = info.getFrequency();
+
+            if (wifiNetwork != null) {
+                out.connected = true;
+                out.detectionSource = "ConnectivityManager Wi-Fi transport";
+
+                LinkProperties lp = cm.getLinkProperties(wifiNetwork);
+                String ip = ipv4FromLinkProperties(lp);
+                if (ip != null) out.ip = ip;
+
+                WifiInfo info = wifiInfoFromCapabilities(wifiCaps);
+                if (info != null) {
+                    fillWifiInfo(out, info, "NetworkCapabilities WifiInfo");
+                }
             }
-        } catch (SecurityException ignored) {
-            out.ssid = "Permission required";
-        } catch (Exception ignored) {}
+
+            // Fallback for OEMs that hide Wi-Fi transport from synchronous NetworkCapabilities.
+            // A configured wlan* interface with IPv4 is a strong signal that Wi-Fi is up.
+            if (!out.connected) {
+                String wlanIp = getWifiInterfaceIpv4();
+                if (wlanIp != null) {
+                    out.connected = true;
+                    out.ip = wlanIp;
+                    out.detectionSource = "wlan interface";
+                }
+            }
+
+            // WifiManager can still expose RSSI/link speed even when SSID/networkId are redacted.
+            if (wm != null && wm.isWifiEnabled()) {
+                WifiInfo legacy = wm.getConnectionInfo();
+                if (legacy != null) {
+                    if (!out.connected && hasUsefulWifiInfo(legacy)) {
+                        out.connected = true;
+                        out.detectionSource = "WifiManager connection info";
+                    }
+                    if (out.connected && "Unavailable".equals(out.detailsSource)) {
+                        fillWifiInfo(out, legacy, "WifiManager connection info");
+                    }
+                }
+            }
+
+            if (out.connected && "Unavailable".equals(out.ssid)) {
+                out.ssid = "Connected (SSID restricted by Android)";
+            }
+        } catch (SecurityException e) {
+            String wlanIp = getWifiInterfaceIpv4();
+            if (wlanIp != null) {
+                out.connected = true;
+                out.ip = wlanIp;
+                out.detectionSource = "wlan interface (permission fallback)";
+                out.ssid = "Connected (permission restricted)";
+            }
+        } catch (Exception ignored) {
+            String wlanIp = getWifiInterfaceIpv4();
+            if (wlanIp != null) {
+                out.connected = true;
+                out.ip = wlanIp;
+                out.detectionSource = "wlan interface (fallback)";
+                out.ssid = "Connected (details unavailable)";
+            }
+        }
         return out;
+    }
+
+    private static WifiInfo wifiInfoFromCapabilities(NetworkCapabilities caps) {
+        if (caps == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null;
+        try {
+            Object transportInfo = caps.getTransportInfo();
+            return transportInfo instanceof WifiInfo ? (WifiInfo) transportInfo : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static void fillWifiInfo(WifiStatus out, WifiInfo info, String source) {
+        if (info == null) return;
+        out.detailsSource = source;
+
+        String ssid = info.getSSID();
+        if (ssid != null && !ssid.isEmpty()
+                && !"<unknown ssid>".equalsIgnoreCase(ssid)
+                && !WifiManager.UNKNOWN_SSID.equals(ssid)) {
+            if (ssid.startsWith("\"") && ssid.endsWith("\"") && ssid.length() >= 2) {
+                ssid = ssid.substring(1, ssid.length() - 1);
+            }
+            out.ssid = ssid;
+        }
+
+        int rssi = info.getRssi();
+        if (rssi != WifiInfo.INVALID_RSSI && rssi <= 0 && rssi >= -127) {
+            out.rssi = rssi;
+        }
+
+        int speed = info.getLinkSpeed();
+        if (speed >= 0) out.linkSpeedMbps = speed;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            int frequency = info.getFrequency();
+            if (frequency > 0) out.frequencyMhz = frequency;
+        }
+    }
+
+    private static boolean hasUsefulWifiInfo(WifiInfo info) {
+        if (info == null) return false;
+        int rssi = info.getRssi();
+        if (rssi != WifiInfo.INVALID_RSSI && rssi <= 0 && rssi >= -127) return true;
+        if (info.getLinkSpeed() > 0) return true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && info.getFrequency() > 0) return true;
+        String ssid = info.getSSID();
+        return ssid != null && !ssid.isEmpty()
+                && !"<unknown ssid>".equalsIgnoreCase(ssid)
+                && !WifiManager.UNKNOWN_SSID.equals(ssid);
+    }
+
+    private static String ipv4FromLinkProperties(LinkProperties lp) {
+        if (lp == null) return null;
+        for (LinkAddress la : lp.getLinkAddresses()) {
+            if (la.getAddress() instanceof Inet4Address && !la.getAddress().isLoopbackAddress()) {
+                String ip = la.getAddress().getHostAddress();
+                if (ip != null && !ip.startsWith("169.254.")) return ip;
+            }
+        }
+        return null;
+    }
+
+    private static String getWifiInterfaceIpv4() {
+        try {
+            for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                String name = ni.getName() == null ? "" : ni.getName().toLowerCase(Locale.US);
+                if (!ni.isUp() || ni.isLoopback()
+                        || !(name.startsWith("wlan") || name.startsWith("wifi"))) {
+                    continue;
+                }
+                for (java.net.InetAddress addr : Collections.list(ni.getInetAddresses())) {
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        String ip = addr.getHostAddress();
+                        if (ip != null && !ip.startsWith("169.254.")) return ip;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     public static DeviceInfo readDeviceInfo() {

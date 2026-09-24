@@ -9,8 +9,11 @@ import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -47,6 +50,19 @@ public class MainActivity extends Activity {
     private EditText designCapacityInput;
     private EditText allowedServerInput;
     private CheckBox autoStartInput;
+    private CheckBox pushEnabledInput;
+    private EditText pushUrlInput;
+    private EditText pushTokenInput;
+    private EditText pushIntervalInput;
+
+    private Section agentSection;
+    private Section transportSection;
+    private Section batterySection;
+    private Section systemSection;
+    private Section networkSection;
+    private Section deviceSection;
+    private Section settingsSection;
+    private Section diagnosticsSection;
 
     private TextView agentBadge;
     private TextView agentText;
@@ -57,6 +73,8 @@ public class MainActivity extends Activity {
     private TextView deviceText;
     private TextView diagnosticsText;
     private ProgressBar batteryProgress;
+
+    private final List<Section> allSections = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -88,22 +106,31 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         root.addView(buildHeader());
-        root.addView(space(14));
+        root.addView(space(12));
+        root.addView(buildSectionControls(), matchWrapMargin(0, 0, 0, 12));
 
-        LinearLayout agentCard = card("AGENT", "Pull listener & connection status");
+        agentSection = section("AGENT", "Pull listener & connection status", false);
         agentBadge = badge("STARTING", C_WARN);
-        agentCard.addView(agentBadge, wrap());
+        agentSection.content.addView(agentBadge, wrap());
         agentText = bodyText();
         agentText.setPadding(0, dp(12), 0, 0);
-        agentCard.addView(agentText, wrap());
-        root.addView(agentCard, matchWrapMargin(0, 0, 0, 12));
+        agentSection.content.addView(agentText, wrap());
+        root.addView(agentSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        LinearLayout batteryCard = card("BATTERY", "Level, health estimate & thermal status");
+        transportSection = section("HYBRID TRANSPORT", "Pull primary + push warm backup", false);
+        TextView transportHelp = bodyText();
+        transportHelp.setText("Pull TCP/6556 tetap menjadi jalur utama. Push hanya menjaga salinan data terbaru di receiver sebagai jalur cadangan.");
+        transportHelp.setTextColor(C_MUTED);
+        transportSection.content.addView(transportHelp, wrap());
+        root.addView(transportSection.card, matchWrapMargin(0, 0, 0, 12));
+
+        batterySection = section("BATTERY", "Level, health estimate & thermal status", false);
         batteryHeadline = new TextView(this);
         batteryHeadline.setTextColor(C_TEXT);
         batteryHeadline.setTextSize(25);
         batteryHeadline.setTypeface(Typeface.DEFAULT_BOLD);
-        batteryCard.addView(batteryHeadline, wrap());
+        batterySection.content.addView(batteryHeadline, wrap());
+
         batteryProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         batteryProgress.setMax(100);
         batteryProgress.setProgressTintList(ColorStateList.valueOf(C_GREEN));
@@ -111,49 +138,77 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(8));
         bp.setMargins(0, dp(10), 0, dp(10));
-        batteryCard.addView(batteryProgress, bp);
+        batterySection.content.addView(batteryProgress, bp);
+
         batteryText = bodyText();
-        batteryCard.addView(batteryText, wrap());
-        root.addView(batteryCard, matchWrapMargin(0, 0, 0, 12));
+        batterySection.content.addView(batteryText, wrap());
+        root.addView(batterySection.card, matchWrapMargin(0, 0, 0, 12));
 
-        LinearLayout systemCard = card("SYSTEM", "RAM & internal storage");
+        systemSection = section("SYSTEM", "RAM & internal storage", false);
         systemText = bodyText();
-        systemCard.addView(systemText, wrap());
-        root.addView(systemCard, matchWrapMargin(0, 0, 0, 12));
+        systemSection.content.addView(systemText, wrap());
+        root.addView(systemSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        LinearLayout networkCard = card("NETWORK", "Warehouse Wi-Fi visibility");
+        networkSection = section("NETWORK", "Warehouse Wi-Fi visibility", false);
         networkText = bodyText();
-        networkCard.addView(networkText, wrap());
-        root.addView(networkCard, matchWrapMargin(0, 0, 0, 12));
+        networkSection.content.addView(networkText, wrap());
+        Button permissionButton = actionButton("OPEN APP PERMISSIONS", C_CARD_ALT, C_TEXT);
+        permissionButton.setOnClickListener(v -> openAppSettings());
+        networkSection.content.addView(permissionButton, matchWrapMargin(0, 12, 0, 0));
+        root.addView(networkSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        LinearLayout deviceCard = card("DEVICE", "Hardware & Android profile");
+        deviceSection = section("DEVICE", "Hardware & Android profile", false);
         deviceText = bodyText();
-        deviceCard.addView(deviceText, wrap());
-        root.addView(deviceCard, matchWrapMargin(0, 0, 0, 12));
+        deviceSection.content.addView(deviceText, wrap());
+        root.addView(deviceSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        LinearLayout settingsCard = card("SETTINGS", "Changes take effect after Save & Start");
-        hostnameInput = input(settingsCard, "Hostname Checkmk", InputType.TYPE_CLASS_TEXT,
+        settingsSection = section("SETTINGS", "Tap to configure agent", false);
+        hostnameInput = input(settingsSection.content, "Hostname Checkmk", InputType.TYPE_CLASS_TEXT,
                 "Contoh: PDA-10-FAUZI");
-        portInput = input(settingsCard, "TCP Port", InputType.TYPE_CLASS_NUMBER, "6556");
-        designCapacityInput = input(settingsCard,
+        portInput = input(settingsSection.content, "TCP Port", InputType.TYPE_CLASS_NUMBER, "6556");
+        designCapacityInput = input(settingsSection.content,
                 "Design Capacity (mAh, 0 = auto)",
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL,
                 "MT93 auto profile = 5000 mAh");
-        allowedServerInput = input(settingsCard,
+        allowedServerInput = input(settingsSection.content,
                 "Allowed Checkmk Server IP",
                 InputType.TYPE_CLASS_TEXT,
                 "Kosong = semua IP; produksi: 192.168.55.112");
+
+        pushEnabledInput = new CheckBox(this);
+        pushEnabledInput.setText("Aktifkan PUSH backup (Hybrid)");
+        pushEnabledInput.setTextColor(C_TEXT);
+        pushEnabledInput.setButtonTintList(ColorStateList.valueOf(C_GREEN));
+        pushEnabledInput.setPadding(0, dp(6), 0, dp(6));
+        settingsSection.content.addView(pushEnabledInput, matchWrap());
+
+        pushUrlInput = input(settingsSection.content,
+                "Push Receiver URL",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI,
+                "Contoh: http://192.168.55.112:18080/api/v1/agent");
+        pushTokenInput = input(settingsSection.content,
+                "Push Token",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD,
+                "Bearer token receiver (opsional untuk test)");
+        pushIntervalInput = input(settingsSection.content,
+                "Push Interval (detik, minimal 60)",
+                InputType.TYPE_CLASS_NUMBER,
+                "300");
+
+        Button testPush = actionButton("TEST PUSH NOW", C_CARD_ALT, C_TEXT);
+        testPush.setOnClickListener(v -> testPushNow());
+        settingsSection.content.addView(testPush, matchWrapMargin(0, 2, 0, 8));
 
         autoStartInput = new CheckBox(this);
         autoStartInput.setText("Start agent otomatis setelah boot");
         autoStartInput.setTextColor(C_TEXT);
         autoStartInput.setButtonTintList(ColorStateList.valueOf(C_GREEN));
         autoStartInput.setPadding(0, dp(6), 0, dp(8));
-        settingsCard.addView(autoStartInput, matchWrap());
+        settingsSection.content.addView(autoStartInput, matchWrap());
 
         Button start = actionButton("SAVE & START AGENT", C_GREEN, Color.rgb(10, 32, 18));
         start.setOnClickListener(v -> saveAndStart());
-        settingsCard.addView(start, matchWrapMargin(0, 4, 0, 8));
+        settingsSection.content.addView(start, matchWrapMargin(0, 4, 0, 8));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -165,7 +220,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams second = weightButton();
         second.setMargins(dp(8), 0, 0, 0);
         actions.addView(preview, second);
-        settingsCard.addView(actions, matchWrapMargin(0, 0, 0, 8));
+        settingsSection.content.addView(actions, matchWrapMargin(0, 0, 0, 8));
 
         Button stop = actionButton("STOP AGENT", Color.rgb(82, 42, 47), Color.rgb(255, 205, 210));
         stop.setOnClickListener(v -> {
@@ -174,17 +229,17 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Agent dihentikan", Toast.LENGTH_SHORT).show();
             agentText.postDelayed(this::updateDashboard, 250);
         });
-        settingsCard.addView(stop, matchWrap());
-        root.addView(settingsCard, matchWrapMargin(0, 0, 0, 12));
+        settingsSection.content.addView(stop, matchWrap());
+        root.addView(settingsSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        LinearLayout diagCard = card("DIAGNOSTICS", "Useful when Checkmk cannot pull the PDA");
+        diagnosticsSection = section("DIAGNOSTICS", "Useful when Checkmk cannot pull the PDA", false);
         diagnosticsText = bodyText();
         diagnosticsText.setTextIsSelectable(true);
-        diagCard.addView(diagnosticsText, wrap());
-        root.addView(diagCard, matchWrapMargin(0, 0, 0, 12));
+        diagnosticsSection.content.addView(diagnosticsText, wrap());
+        root.addView(diagnosticsSection.card, matchWrapMargin(0, 0, 0, 12));
 
         TextView footer = new TextView(this);
-        footer.setText("Collection mode: on-demand Checkmk pull. Recommended monitoring interval: 60 seconds. No background metric polling loop is used.");
+        footer.setText("Collection: HYBRID. Pull tetap primary; push menjaga warm backup sesuai interval. Tap section untuk expand/collapse.\n\nDibuat oleh IT OPS HQEJBNT");
         footer.setTextColor(C_MUTED);
         footer.setTextSize(12);
         footer.setGravity(Gravity.CENTER);
@@ -213,7 +268,7 @@ public class MainActivity extends Activity {
         title.setTextSize(29);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         TextView subtitle = new TextView(this);
-        subtitle.setText("Checkmk Android pull agent  •  v" + CheckmkOutput.VERSION);
+        subtitle.setText("Checkmk Android hybrid agent  •  v" + CheckmkOutput.VERSION);
         subtitle.setTextColor(C_MUTED);
         subtitle.setTextSize(13);
         text.addView(title);
@@ -223,6 +278,90 @@ public class MainActivity extends Activity {
         return header;
     }
 
+    private View buildSectionControls() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        Button expand = actionButton("EXPAND ALL", C_CARD_ALT, C_TEXT);
+        Button collapse = actionButton("COLLAPSE ALL", C_CARD_ALT, C_TEXT);
+        expand.setOnClickListener(v -> setAllSections(true));
+        collapse.setOnClickListener(v -> setAllSections(false));
+        row.addView(expand, weightButton());
+        LinearLayout.LayoutParams cp = weightButton();
+        cp.setMargins(dp(8), 0, 0, 0);
+        row.addView(collapse, cp);
+        return row;
+    }
+
+    private Section section(String titleText, String subtitleText, boolean expanded) {
+        Section s = new Section();
+        s.card = new LinearLayout(this);
+        s.card.setOrientation(LinearLayout.VERTICAL);
+        s.card.setPadding(dp(16), dp(13), dp(16), dp(14));
+        s.card.setBackground(rounded(C_CARD, 16, C_LINE, 1));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(0, dp(2), 0, dp(2));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(C_GREEN);
+        title.setTextSize(13);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView subtitle = new TextView(this);
+        subtitle.setText(subtitleText);
+        subtitle.setTextColor(C_MUTED);
+        subtitle.setTextSize(12);
+        subtitle.setPadding(0, dp(2), 0, 0);
+        labels.addView(title, wrap());
+        labels.addView(subtitle, wrap());
+        header.addView(labels, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        s.arrow = new TextView(this);
+        s.arrow.setTextColor(C_MUTED);
+        s.arrow.setTextSize(20);
+        s.arrow.setGravity(Gravity.CENTER);
+        s.arrow.setPadding(dp(12), 0, dp(4), 0);
+        header.addView(s.arrow, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        s.card.addView(header, matchWrap());
+
+        s.summary = new TextView(this);
+        s.summary.setTextColor(C_TEXT);
+        s.summary.setTextSize(14);
+        s.summary.setTypeface(Typeface.DEFAULT_BOLD);
+        s.summary.setPadding(0, dp(8), 0, dp(2));
+        s.card.addView(s.summary, matchWrap());
+
+        s.content = new LinearLayout(this);
+        s.content.setOrientation(LinearLayout.VERTICAL);
+        s.content.setPadding(0, dp(12), 0, 0);
+        s.card.addView(s.content, matchWrap());
+
+        View.OnClickListener toggle = v -> setSectionExpanded(s, !s.expanded);
+        header.setOnClickListener(toggle);
+        s.summary.setOnClickListener(toggle);
+        s.card.setClickable(true);
+        s.card.setFocusable(true);
+
+        allSections.add(s);
+        setSectionExpanded(s, expanded);
+        return s;
+    }
+
+    private void setSectionExpanded(Section s, boolean expanded) {
+        s.expanded = expanded;
+        s.content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        s.arrow.setText(expanded ? "▾" : "▸");
+    }
+
+    private void setAllSections(boolean expanded) {
+        for (Section s : allSections) setSectionExpanded(s, expanded);
+    }
+
     private void loadConfig() {
         hostnameInput.setText(AgentConfig.getHostname(this));
         portInput.setText(String.valueOf(AgentConfig.getPort(this)));
@@ -230,6 +369,10 @@ public class MainActivity extends Activity {
         designCapacityInput.setText(design > 0
                 ? String.format(Locale.US, "%.0f", design) : "0");
         allowedServerInput.setText(AgentConfig.getAllowedServer(this));
+        pushEnabledInput.setChecked(AgentConfig.isPushEnabled(this));
+        pushUrlInput.setText(AgentConfig.getPushUrl(this));
+        pushTokenInput.setText(AgentConfig.getPushToken(this));
+        pushIntervalInput.setText(String.valueOf(AgentConfig.getPushIntervalSec(this)));
         autoStartInput.setChecked(AgentConfig.isAutoStart(this));
     }
 
@@ -240,9 +383,20 @@ public class MainActivity extends Activity {
             String designRaw = designCapacityInput.getText().toString().trim();
             double design = designRaw.isEmpty() ? 0.0 : Double.parseDouble(designRaw);
             String allowed = allowedServerInput.getText().toString().trim();
+            boolean pushEnabled = pushEnabledInput.isChecked();
+            String pushUrl = pushUrlInput.getText().toString().trim();
+            String pushToken = pushTokenInput.getText().toString().trim();
+            String pushIntervalRaw = pushIntervalInput.getText().toString().trim();
+            int pushInterval = pushIntervalRaw.isEmpty() ? 300 : Integer.parseInt(pushIntervalRaw);
             if (port < 1 || port > 65535) throw new IllegalArgumentException("Port tidak valid");
             if (design < 0 || design > 50000) throw new IllegalArgumentException("Design capacity tidak valid");
-            AgentConfig.save(this, hostname, port, design, autoStartInput.isChecked(), allowed);
+            if (pushInterval < 60 || pushInterval > 86400) throw new IllegalArgumentException("Push interval harus 60-86400 detik");
+            if (pushEnabled && !pushUrl.isEmpty()
+                    && !(pushUrl.startsWith("http://") || pushUrl.startsWith("https://"))) {
+                throw new IllegalArgumentException("Push URL harus dimulai http:// atau https://");
+            }
+            AgentConfig.save(this, hostname, port, design, autoStartInput.isChecked(), allowed,
+                    pushEnabled, pushUrl, pushToken, pushInterval);
             return true;
         } catch (Exception e) {
             Toast.makeText(this, "Konfigurasi tidak valid: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -268,24 +422,50 @@ public class MainActivity extends Activity {
         DeviceMetrics.DeviceInfo device = DeviceMetrics.readDeviceInfo();
         AgentStats.Snapshot stats = AgentStats.read(this);
 
-        agentBadge.setText(stats.running ? "● AGENT RUNNING" : "● AGENT STOPPED");
-        styleBadge(agentBadge, stats.running ? C_GREEN : C_CRIT);
+        String localIp = DeviceMetrics.getLocalIpv4();
         String lastPull = stats.lastPullMs > 0 ? formatDate(stats.lastPullMs) : "Belum ada";
         String allow = AgentConfig.getAllowedServer(this);
         if (allow.isEmpty()) allow = "Any source";
+
+        agentSection.summary.setText((stats.running ? "RUNNING" : "STOPPED")
+                + "  •  " + AgentConfig.getHostname(this) + "  •  " + localIp);
+        agentBadge.setText(stats.running ? "● AGENT RUNNING" : "● AGENT STOPPED");
+        styleBadge(agentBadge, stats.running ? C_GREEN : C_CRIT);
         agentText.setText(
                 "Hostname     : " + AgentConfig.getHostname(this) + "\n"
                         + "Listen       : 0.0.0.0:" + AgentConfig.getPort(this) + "\n"
-                        + "Device IP    : " + DeviceMetrics.getLocalIpv4() + "\n"
+                        + "Device IP    : " + localIp + "\n"
                         + "Last pull    : " + lastPull + "\n"
                         + "Last client  : " + stats.lastClient + "\n"
                         + "Allowed IP   : " + allow + "\n"
-                        + "Mode         : On-demand pull (recommended every 60s)"
+                        + "Mode         : HYBRID (PULL primary + PUSH backup)"
+        );
+
+        String pushUrl = AgentConfig.getPushUrl(this);
+        boolean pushConfigured = AgentConfig.isPushConfigured(this);
+        String lastPush = stats.lastPushMs > 0 ? formatDate(stats.lastPushMs) : "Belum ada";
+        String pushState = !pushConfigured ? "NOT CONFIGURED"
+                : stats.lastPushMs <= 0 ? "WAITING"
+                : stats.lastPushOk ? "OK" : "FAILED";
+        transportSection.summary.setText("PULL primary  •  PUSH " + pushState
+                + "  •  " + AgentConfig.getPushIntervalSec(this) + "s");
+        TextView transportBody = ensureTransportBody();
+        transportBody.setText(
+                "Primary        : PULL TCP/" + AgentConfig.getPort(this) + "\n"
+                        + "Backup         : PUSH HTTP(S)\n"
+                        + "Receiver       : " + (pushUrl.isEmpty() ? "Not configured" : pushUrl) + "\n"
+                        + "Interval       : " + AgentConfig.getPushIntervalSec(this) + " sec\n"
+                        + "Last push      : " + lastPush + "\n"
+                        + "Last result    : " + pushState + "\n"
+                        + "HTTP code      : " + (stats.lastPushCode > 0 ? stats.lastPushCode : "N/A") + "\n"
+                        + "Detail         : " + stats.lastPushMessage + "\n"
+                        + "Push success   : " + stats.pushSuccesses + "\n"
+                        + "Push failures  : " + stats.pushFailures
         );
 
         int level = Math.max(0, b.level);
-        batteryProgress.setProgress(level);
         int batteryColor = level < 15 ? C_CRIT : level < 30 ? C_WARN : C_GREEN;
+        batteryProgress.setProgress(level);
         batteryProgress.setProgressTintList(ColorStateList.valueOf(batteryColor));
         batteryHeadline.setText((b.level >= 0 ? b.level + "%" : "N/A") + "  •  " + b.status);
         batteryHeadline.setTextColor(batteryColor);
@@ -302,6 +482,9 @@ public class MainActivity extends Activity {
                 : String.format(Locale.US, "%.2f V", b.voltageV);
         String current = Double.isNaN(b.currentNowMa) ? "N/A"
                 : String.format(Locale.US, "%.0f mA", b.currentNowMa);
+
+        batterySection.summary.setText((b.level >= 0 ? b.level + "%" : "N/A")
+                + "  •  " + b.status + "  •  Health " + health);
         batteryText.setText(
                 "Estimated health : " + health + "\n"
                         + "Design capacity : " + design + "\n"
@@ -313,6 +496,8 @@ public class MainActivity extends Activity {
                         + "Current now     : " + current
         );
 
+        systemSection.summary.setText("RAM " + Math.round(ram.usedPercent) + "%  •  Storage "
+                + Math.round(storage.usedPercent) + "%");
         systemText.setText(
                 "RAM      : " + Math.round(ram.usedPercent) + "% used  •  "
                         + DeviceMetrics.fmt2(ram.freeGb) + " GB free / "
@@ -325,15 +510,28 @@ public class MainActivity extends Activity {
         String rssi = wifi.rssi == Integer.MIN_VALUE ? "N/A" : wifi.rssi + " dBm";
         String speed = wifi.linkSpeedMbps < 0 ? "N/A" : wifi.linkSpeedMbps + " Mbps";
         String freq = wifi.frequencyMhz < 0 ? "N/A" : wifi.frequencyMhz + " MHz";
+        String nearbyPermission = permissionState(Manifest.permission.NEARBY_WIFI_DEVICES, 33);
+        String locationPermission = permissionState(Manifest.permission.ACCESS_FINE_LOCATION, 23);
+        String locationService = isLocationEnabled() ? "ON" : "OFF";
+
+        networkSection.summary.setText((wifi.connected ? "Wi-Fi Connected" : "Wi-Fi Unavailable")
+                + "  •  " + rssi + "  •  " + wifi.ip);
         networkText.setText(
-                "Wi-Fi      : " + (wifi.connected ? "Connected" : "Unavailable") + "\n"
-                        + "SSID       : " + wifi.ssid + "\n"
-                        + "Signal     : " + rssi + "\n"
-                        + "Link speed : " + speed + "\n"
-                        + "Frequency  : " + freq + "\n"
-                        + "IP         : " + wifi.ip
+                "Wi-Fi          : " + (wifi.connected ? "Connected" : "Unavailable") + "\n"
+                        + "SSID           : " + wifi.ssid + "\n"
+                        + "Signal         : " + rssi + "\n"
+                        + "Link speed     : " + speed + "\n"
+                        + "Frequency      : " + freq + "\n"
+                        + "IP             : " + wifi.ip + "\n"
+                        + "Detection      : " + wifi.detectionSource + "\n"
+                        + "Details source : " + wifi.detailsSource + "\n"
+                        + "Nearby Wi-Fi   : " + nearbyPermission + "\n"
+                        + "Fine location  : " + locationPermission + "\n"
+                        + "Location svc   : " + locationService
         );
 
+        deviceSection.summary.setText(device.manufacturer + " " + device.model
+                + "  •  Android " + device.androidVersion);
         deviceText.setText(
                 "Manufacturer : " + device.manufacturer + "\n"
                         + "Model        : " + device.model + "\n"
@@ -342,14 +540,54 @@ public class MainActivity extends Activity {
                         + "Device uptime: " + CheckmkOutput.formatDuration(device.uptimeMs)
         );
 
+        settingsSection.summary.setText(AgentConfig.getHostname(this) + "  •  TCP "
+                + AgentConfig.getPort(this) + "  •  Push "
+                + (AgentConfig.isPushConfigured(this) ? "ON" : "OFF"));
+
+        diagnosticsSection.summary.setText("Pulls " + stats.accepted + "  •  Push OK "
+                + stats.pushSuccesses + "  •  Push fail " + stats.pushFailures);
         diagnosticsText.setText(
                 "Accepted pulls : " + stats.accepted + "\n"
                         + "Rejected pulls : " + stats.rejected + "\n"
                         + "Last rejected  : " + stats.lastRejected + "\n"
+                        + "Push attempts  : " + stats.pushAttempts + "\n"
+                        + "Push successes : " + stats.pushSuccesses + "\n"
+                        + "Push failures  : " + stats.pushFailures + "\n"
+                        + "Last push code : " + stats.lastPushCode + "\n"
+                        + "Last push msg  : " + stats.lastPushMessage + "\n"
                         + "Foreground svc : " + (stats.running ? "running" : "stopped") + "\n"
                         + "Battery samples: " + b.estimateSamples + "\n"
                         + "Package        : com.bcp.checkmkagent"
         );
+    }
+
+    private TextView ensureTransportBody() {
+        if (transportSection.content.getChildCount() >= 2
+                && transportSection.content.getChildAt(1) instanceof TextView) {
+            return (TextView) transportSection.content.getChildAt(1);
+        }
+        TextView body = bodyText();
+        body.setPadding(0, dp(10), 0, 0);
+        transportSection.content.addView(body, wrap());
+        return body;
+    }
+
+    private void testPushNow() {
+        if (!saveConfigOnly()) return;
+        if (!AgentConfig.isPushConfigured(this)) {
+            Toast.makeText(this, "Isi Push Receiver URL dan aktifkan PUSH backup terlebih dahulu", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, "Mengirim test push...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            PushClient.Result result = PushClient.pushNow(getApplicationContext());
+            runOnUiThread(() -> {
+                Toast.makeText(this, result.ok
+                        ? "Push OK (HTTP " + result.code + ")"
+                        : "Push gagal: " + result.message, Toast.LENGTH_LONG).show();
+                updateDashboard();
+            });
+        }, "cmkagent-test-push").start();
     }
 
     private void showAgentOutput() {
@@ -401,26 +639,28 @@ public class MainActivity extends Activity {
         if (!needed.isEmpty()) requestPermissions(needed.toArray(new String[0]), 1001);
     }
 
-    private LinearLayout card(String titleText, String subtitleText) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(15), dp(16), dp(16));
-        card.setBackground(rounded(C_CARD, 16, C_LINE, 1));
+    private String permissionState(String permission, int minSdk) {
+        if (Build.VERSION.SDK_INT < minSdk) return "N/A";
+        return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+                ? "Granted" : "Denied";
+    }
 
-        TextView title = new TextView(this);
-        title.setText(titleText);
-        title.setTextColor(C_GREEN);
-        title.setTextSize(13);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        card.addView(title, wrap());
+    private boolean isLocationEnabled() {
+        try {
+            LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+            if (lm == null) return false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) return lm.isLocationEnabled();
+            return lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                    || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText(subtitleText);
-        subtitle.setTextColor(C_MUTED);
-        subtitle.setTextSize(12);
-        subtitle.setPadding(0, dp(2), 0, dp(12));
-        card.addView(subtitle, wrap());
-        return card;
+    private void openAppSettings() {
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
     }
 
     private EditText input(LinearLayout parent, String label, int type, String hint) {
@@ -476,15 +716,17 @@ public class MainActivity extends Activity {
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setAllCaps(false);
         b.setGravity(Gravity.CENTER);
-        b.setBackground(rounded(bg, 10, bg, 0));
+        b.setMinHeight(0);
+        b.setMinimumHeight(0);
+        b.setBackground(rounded(bg, 11, C_LINE, 1));
         return b;
     }
 
-    private GradientDrawable rounded(int fill, int radiusDp, int stroke, int strokeDp) {
+    private GradientDrawable rounded(int color, int radiusDp, int strokeColor, int strokeDp) {
         GradientDrawable d = new GradientDrawable();
-        d.setColor(fill);
+        d.setColor(color);
         d.setCornerRadius(dp(radiusDp));
-        if (strokeDp > 0) d.setStroke(dp(strokeDp), stroke);
+        if (strokeDp > 0) d.setStroke(dp(strokeDp), strokeColor);
         return d;
     }
 
@@ -492,15 +734,10 @@ public class MainActivity extends Activity {
         return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
     }
 
-    private View space(int height) {
+    private View space(int heightDp) {
         View v = new View(this);
-        v.setLayoutParams(new LinearLayout.LayoutParams(1, dp(height)));
+        v.setLayoutParams(new LinearLayout.LayoutParams(1, dp(heightDp)));
         return v;
-    }
-
-    private String formatDate(long millis) {
-        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                .format(new Date(millis));
     }
 
     private LinearLayout.LayoutParams wrap() {
@@ -515,24 +752,38 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
     }
 
-    private LinearLayout.LayoutParams matchWrapMargin(int l, int t, int r, int b) {
+    private LinearLayout.LayoutParams matchWrapMargin(int left, int top, int right, int bottom) {
         LinearLayout.LayoutParams p = matchWrap();
-        p.setMargins(dp(l), dp(t), dp(r), dp(b));
+        p.setMargins(dp(left), dp(top), dp(right), dp(bottom));
         return p;
     }
 
-    private LinearLayout.LayoutParams matchHeightMargin(int height, int l, int t, int r, int b) {
+    private LinearLayout.LayoutParams matchHeightMargin(
+            int height, int left, int top, int right, int bottom) {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(height));
-        p.setMargins(dp(l), dp(t), dp(r), dp(b));
+        p.setMargins(dp(left), dp(top), dp(right), dp(bottom));
         return p;
     }
 
     private LinearLayout.LayoutParams weightButton() {
-        return new LinearLayout.LayoutParams(0, dp(46), 1f);
+        return new LinearLayout.LayoutParams(0, dp(48), 1f);
     }
 
     private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private String formatDate(long millis) {
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(new Date(millis));
+    }
+
+    private static final class Section {
+        LinearLayout card;
+        LinearLayout content;
+        TextView arrow;
+        TextView summary;
+        boolean expanded;
     }
 }

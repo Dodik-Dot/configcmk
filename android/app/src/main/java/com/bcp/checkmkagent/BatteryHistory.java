@@ -10,7 +10,7 @@ import java.util.Locale;
 
 public final class BatteryHistory {
     private static final String PREFS = "cmkagent_battery_history";
-    private static final String KEY = "full_capacity_samples";
+    private static final String KEY = "full_capacity_samples_v2";
     private static final int MAX_SAMPLES = 9;
 
     private BatteryHistory() {}
