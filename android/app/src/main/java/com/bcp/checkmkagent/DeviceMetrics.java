@@ -4,6 +4,7 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
@@ -126,7 +127,7 @@ public final class DeviceMetrics {
             if (validBatteryProperty(currentAvgUa)) out.currentAverageMa = currentAvgUa / 1000.0;
         }
 
-        // A manually configured value wins. It is useful when a vendor exposes an incorrect profile.
+        // 1. Tentukan Design Capacity
         double manual = AgentConfig.getDesignCapacityMah(context);
         if (isPositive(manual)) {
             out.designCapacityMah = manual;
@@ -155,12 +156,12 @@ public final class DeviceMetrics {
             }
         }
 
-        // Try several vendor/kernel locations. Different Android devices expose battery fuel-gauge
-        // information in different power_supply nodes. All accesses are best-effort and require no root.
+        // 2. Baca Kapasitas Penuh dari Node Kernel Langsung (Jika Tersedia)
         String[] fullPaths = {
                 "/sys/class/power_supply/battery/charge_full",
                 "/sys/class/power_supply/bms/charge_full",
-                "/sys/class/power_supply/main/charge_full"
+                "/sys/class/power_supply/main/charge_full",
+                "/sys/class/power_supply/battery/full_charge_capacity"
         };
         for (String path : fullPaths) {
             double full = readChargeCapacityMah(path);
@@ -185,32 +186,79 @@ public final class DeviceMetrics {
             }
         }
 
-        // Fallback estimate using BatteryManager charge counter. Android does not provide a public
-        // full-charge-capacity API on every device. We collect samples only while the battery is not
-        // actively charging and smooth them using a rolling median. v1.1.1 also accepts near-full
-        // discharging samples (e.g. 97%), which fixes N/A on modern Xiaomi/POCO devices.
+        // 3. Pembersihan Cache Histori Cacat Otomatis (Self-Healing)
+        // Jika histori lama berisi sampel parsial (~61%) yang menyebabkan false alarm, bersihkan SharedPreferences.
+        SharedPreferences bp = context.getSharedPreferences("cmkagent_battery_history", Context.MODE_PRIVATE);
+        String rawSamples = bp.getString("full_capacity_samples_v2", "");
+        if (!rawSamples.isEmpty() && isPositive(out.designCapacityMah)) {
+            String[] tokens = rawSamples.split(",");
+            double sum = 0.0;
+            int count = 0;
+            for (String t : tokens) {
+                try {
+                    double v = Double.parseDouble(t.trim());
+                    if (v > 0) {
+                        sum += v;
+                        count++;
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (count > 0 && (sum / count) < (out.designCapacityMah * 0.75)) {
+                bp.edit().remove("full_capacity_samples_v2").apply();
+            }
+        }
+
+        // 4. Pengambilan Sampel Estimasi Baterai
+        // Hanya ambil sampel saat baterai dalam kondisi stabil dan terisi tinggi (>= 90% atau Full)
+        // untuk mencegah deviasi perhitungan saat baterai masih berada di level menengah.
         boolean stableState = "Discharging".equals(out.status)
                 || "Not Charging".equals(out.status)
                 || "Full".equals(out.status);
+        boolean isNearFull = out.level >= 90 || "Full".equals(out.status);
+
         if (!isPositive(out.fullCapacityMah)
                 && isPositive(out.chargeCounterMah)
-                && out.level >= 15 && out.level <= 100
+                && isNearFull
                 && stableState) {
             double estimate = out.chargeCounterMah / (out.level / 100.0);
             boolean plausible = !isPositive(out.designCapacityMah)
-                    || (estimate >= out.designCapacityMah * 0.30
-                    && estimate <= out.designCapacityMah * 1.20);
+                    || (estimate >= out.designCapacityMah * 0.70
+                    && estimate <= out.designCapacityMah * 1.25);
             if (plausible) {
                 out.fullCapacityMah = BatteryHistory.addAndMedian(context, estimate);
                 out.estimateSamples = BatteryHistory.size(context);
                 out.fullCapacityEstimated = true;
-                out.fullCapacitySource = "Estimated median (" + out.estimateSamples + " samples)";
+                out.fullCapacitySource = "Estimated median (" + out.estimateSamples + " samples @ >=90%)";
             }
         }
 
+        // 5. Fallback untuk Perangkat Baru (Baseline)
+        if (!isPositive(out.fullCapacityMah)) {
+            int existingSize = BatteryHistory.size(context);
+            if (existingSize > 0) {
+                // Gunakan median dari sampel valid yang tersimpan
+                double median = BatteryHistory.addAndMedian(context, Double.NaN);
+                if (isPositive(median)) {
+                    out.fullCapacityMah = median;
+                    out.estimateSamples = existingSize;
+                    out.fullCapacityEstimated = true;
+                    out.fullCapacitySource = "Estimated median (" + existingSize + " samples)";
+                }
+            }
+            
+            // Jika perangkat baru belum pernah diisi penuh hingga >=90%, gunakan Design Capacity sebagai baseline 100% OK
+            if (!isPositive(out.fullCapacityMah) && isPositive(out.designCapacityMah)) {
+                out.fullCapacityMah = out.designCapacityMah;
+                out.fullCapacityEstimated = true;
+                out.fullCapacitySource = "New Device Baseline (Pending 100% cycle)";
+                out.estimateSamples = 0;
+            }
+        }
+
+        // 6. Hitung Persentase Kesehatan Baterai
         if (isPositive(out.designCapacityMah) && isPositive(out.fullCapacityMah)) {
             out.healthPercent = clamp(
-                    out.fullCapacityMah / out.designCapacityMah * 100.0, 0.0, 120.0);
+                    out.fullCapacityMah / out.designCapacityMah * 100.0, 0.0, 100.0);
         }
 
         return out;
@@ -254,8 +302,6 @@ public final class DeviceMetrics {
             Network wifiNetwork = null;
             NetworkCapabilities wifiCaps = null;
 
-            // The default/active network is not always Wi-Fi (VPN, mobile data, vendor routing).
-            // Enumerate every network and pick an actual Wi-Fi transport instead.
             if (cm != null) {
                 Network[] networks = cm.getAllNetworks();
                 if (networks != null) {
@@ -284,8 +330,6 @@ public final class DeviceMetrics {
                 }
             }
 
-            // Fallback for OEMs that hide Wi-Fi transport from synchronous NetworkCapabilities.
-            // A configured wlan* interface with IPv4 is a strong signal that Wi-Fi is up.
             if (!out.connected) {
                 String wlanIp = getWifiInterfaceIpv4();
                 if (wlanIp != null) {
@@ -295,7 +339,6 @@ public final class DeviceMetrics {
                 }
             }
 
-            // WifiManager can still expose RSSI/link speed even when SSID/networkId are redacted.
             if (wm != null && wm.isWifiEnabled()) {
                 WifiInfo legacy = wm.getConnectionInfo();
                 if (legacy != null) {
@@ -445,8 +488,6 @@ public final class DeviceMetrics {
     }
 
     private static boolean isUsableRssi(int rssi) {
-        // Android uses -127 dBm as the common invalid/unknown RSSI sentinel.
-        // Avoid WifiInfo.INVALID_RSSI because it is not part of the public SDK on all compile SDKs.
         return rssi > -127 && rssi <= 0;
     }
 
@@ -457,7 +498,6 @@ public final class DeviceMetrics {
     private static double readChargeCapacityMah(String path) {
         Double raw = readNumber(path);
         if (raw == null || raw <= 0) return Double.NaN;
-        // Most Android kernels expose charge_* in uAh. Some expose mAh directly.
         if (raw > 100000) return raw / 1000.0;
         if (raw > 1000 && raw < 30000) return raw;
         return Double.NaN;
@@ -466,7 +506,6 @@ public final class DeviceMetrics {
     private static double readEnergyCapacityMah(String path, double voltageV) {
         Double raw = readNumber(path);
         if (raw == null || raw <= 0 || !isPositive(voltageV)) return Double.NaN;
-        // Most energy_* nodes are uWh. mAh = uWh / mV.
         double voltageMv = voltageV * 1000.0;
         if (raw > 100000) return raw / voltageMv;
         return Double.NaN;
@@ -495,9 +534,7 @@ public final class DeviceMetrics {
                 double mah = (Double) value;
                 return mah > 0 ? mah : Double.NaN;
             }
-        } catch (Throwable ignored) {
-            // Hidden/vendor APIs can be blocked. Other fallbacks are intentional.
-        }
+        } catch (Throwable ignored) {}
         return Double.NaN;
     }
 
