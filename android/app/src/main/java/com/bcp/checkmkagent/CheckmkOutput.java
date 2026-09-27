@@ -9,10 +9,10 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class CheckmkOutput {
-    public static final String VERSION = "1.3.2";
+    public static final String VERSION = "1.3.3";
     private static final String PREFS_CACHE = "cmkagent_metrics_cache";
 
-    // Definisi Interval Sesuai Kebutuhan (dalam satuan detik)
+    // Definisi Interval Caching (dalam detik)
     private static final long INTERVAL_TEMP_SEC = 1800L;       // 30 menit
     private static final long INTERVAL_CURRENT_SEC = 3600L;     // 1 jam
     private static final long INTERVAL_TRANSPORT_SEC = 10800L;  // 3 jam
@@ -41,7 +41,7 @@ public final class CheckmkOutput {
         long lastSec = p.getLong(key + "_ts", 0L);
         String cachedLine = p.getString(key + "_line", null);
 
-        // Jika cache belum ada, interval telah lewat, atau jam sistem mundur, perbarui data
+        // Perbarui data jika cache kosong, interval kedaluwarsa, atau jam sistem berubah
         if (cachedLine == null || (nowSec - lastSec) >= intervalSec || lastSec > nowSec) {
             String newLine = generator.generate();
             p.edit()
@@ -66,11 +66,11 @@ public final class CheckmkOutput {
         sb.append("AgentOS: android\n");
         sb.append("Hostname: ").append(AgentConfig.getHostname(context)).append("\n\n");
 
-        // 1. Service Real-time (Diperbarui setiap siklus pull Checkmk)
+        // 1. Service Real-time (Diambil setiap siklus pull Checkmk)
         sb.append("<<<local:sep(0)>>>\n");
         sb.append(buildAgentStatusLine(context, stats)).append('\n');
         sb.append(buildBatteryLevelLine(battery)).append('\n');
-        sb.append(buildBatteryHealthLine(battery)).append('\n');
+        sb.append(buildBatteryHealthLine(battery)).append('\n'); // 1 Baris gabungan Health + Cycles
         sb.append(buildRamLine(ram)).append('\n');
         sb.append(buildWifiLine(wifi)).append('\n');
         sb.append(buildAndroidInfoLine(device)).append('\n');
@@ -103,7 +103,7 @@ public final class CheckmkOutput {
                 .append(INTERVAL_VOLTAGE_SEC).append("):sep(0)>>>\n");
         sb.append(voltageEntry.line).append('\n');
 
-        // 6. Storage_Usage: 1 hari sekali (86400 detik, hanya membaca StatFs saat cache kedaluwarsa)
+        // 6. Storage_Usage: 1 hari sekali (86400 detik)
         CachedEntry storageEntry = getOrUpdateCache(context, "storage", INTERVAL_STORAGE_SEC,
                 () -> buildStorageLine(DeviceMetrics.readStorage()));
         sb.append("<<<local:cached(").append(storageEntry.epochSec).append(",")
@@ -179,28 +179,45 @@ public final class CheckmkOutput {
                 + " | Charging State : " + b.status;
     }
 
+    /**
+     * 1 Baris Service Tunggal: Health + Cycles + Full Spec + Current Charge
+     */
     private static String buildBatteryHealthLine(DeviceMetrics.BatteryInfo b) {
-        int state = 0;
-        if (!Double.isNaN(b.healthPercent)) {
-            if (b.healthPercent < 60.0) state = 2;
-            else if (b.healthPercent < 75.0) state = 1;
+        if (Double.isNaN(b.healthPercent)) {
+            return "0 \"Health_Battery\" - Status : OK | Health : N/A (Calculating real metrics)";
         }
-        String design = !Double.isNaN(b.designCapacityMah)
-                ? Math.round(b.designCapacityMah) + " mAh" : "N/A";
-        String full = !Double.isNaN(b.fullCapacityMah)
-                ? Math.round(b.fullCapacityMah) + " mAh" : "N/A";
-        String health = !Double.isNaN(b.healthPercent)
-                ? String.format(Locale.US, "%.1f%%", b.healthPercent) : "N/A";
-        String metric = !Double.isNaN(b.healthPercent)
-                ? String.format(Locale.US, "battery_health=%.1f", b.healthPercent) : "-";
+
+        // Ambang evaluasi:
+        // WARN: Health < 80% ATAU Cycles >= 500
+        // CRIT: Health < 65% ATAU Cycles >= 800
+        int state = 0;
+        if (b.healthPercent < 65.0 || (b.cycleCount >= 800)) {
+            state = 2;
+        } else if (b.healthPercent < 80.0 || (b.cycleCount >= 500)) {
+            state = 1;
+        }
+
+        String fullStr = Double.isNaN(b.fullCapacityMah) ? "N/A" : Math.round(b.fullCapacityMah) + " mAh";
+        String designStr = Double.isNaN(b.designCapacityMah) ? "N/A" : Math.round(b.designCapacityMah) + " mAh";
+        String chargeStr = Double.isNaN(b.chargeCounterMah) ? "N/A" : Math.round(b.chargeCounterMah) + " mAh";
+        String fullVoltStr = Double.isNaN(b.fullChargeVoltageV) ? "" : String.format(Locale.US, " | Full Voltage : %.2f V", b.fullChargeVoltageV);
+        String cycleStr = (b.cycleCount >= 0) ? (" | Cycles : " + b.cycleCount) : " | Cycles : N/A";
+
+        // Grafik RRD ganda di dalam 1 service: grafik % kesehatan dan grafik total siklus
+        String metric = "battery_health=" + String.format(Locale.US, "%.1f", b.healthPercent) + ";80;65;0;100";
+        if (b.cycleCount >= 0) {
+            metric += "|battery_cycles=" + b.cycleCount + ";500;800;0";
+        }
+
         return state + " \"Health_Battery\" " + metric
                 + " Status : " + stateName(state)
-                + " | Design Capacity : " + design
-                + " | Design Source : " + b.designCapacitySource
-                + " | " + (b.fullCapacityEstimated ? "Estimated Full Capacity" : "Full Capacity")
-                + " : " + full
-                + " | Capacity Source : " + b.fullCapacitySource
-                + " | Estimated Health : " + health;
+                + " | Real Health : " + String.format(Locale.US, "%.1f%%", b.healthPercent)
+                + cycleStr
+                + " | Full Capacity : " + fullStr
+                + " | Design Spec : " + designStr
+                + fullVoltStr
+                + " | Current Charge : " + chargeStr
+                + " | Calculation : " + b.fullCapacitySource;
     }
 
     private static String buildBatteryTemperatureLine(DeviceMetrics.BatteryInfo b) {
