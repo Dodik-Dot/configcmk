@@ -41,12 +41,12 @@ public final class DeviceMetrics {
         public double temperatureC = Double.NaN;
         public double voltageV = Double.NaN;
         public String status = "Unknown";
-        public double chargeCounterMah = Double.NaN;     // Muatan tersimpan saat ini (mA·h)
+        public double chargeCounterMah = Double.NaN;     // Muatan riil saat ini (mA·h)
         public double currentNowMa = Double.NaN;
         public double currentAverageMa = Double.NaN;
         public double designCapacityMah = Double.NaN;    // Nilai rancangan pabrik (4800 mAh)
         public String designCapacitySource = "Unavailable";
-        public double fullCapacityMah = Double.NaN;      // Estimasi / kalibrasi kapasitas saat 100% penuh
+        public double fullCapacityMah = Double.NaN;      // Estimasi / kapasitas saat 100% penuh
         public double fullChargeVoltageV = Double.NaN;   // Tegangan cut-off saat full charge
         public String fullCapacitySource = "Unavailable";
         public boolean fullCapacityEstimated = false;
@@ -134,8 +134,9 @@ public final class DeviceMetrics {
             if (validBatteryProperty(currentAvgUa)) out.currentAverageMa = currentAvgUa / 1000.0;
 
             // 1. Ambil Cycle Count via API Android 14+ (SDK 34+)
+            // Nilai integer 7 adalah nilai resmi BATTERY_PROPERTY_CYCLE_COUNT agar kompatibel dengan semua target SDK
             if (Build.VERSION.SDK_INT >= 34) {
-                int cycles = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CYCLE_COUNT);
+                int cycles = bm.getIntProperty(7);
                 if (validBatteryProperty(cycles) && cycles >= 0) {
                     out.cycleCount = cycles;
                 }
@@ -515,6 +516,10 @@ public final class DeviceMetrics {
 
     private static boolean isPositive(double value) {
         return !Double.isNaN(value) && !Double.isInfinite(value) && value > 0;
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static double bytesToGb(long bytes) {
