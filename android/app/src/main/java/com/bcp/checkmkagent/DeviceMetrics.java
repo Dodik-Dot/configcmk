@@ -29,7 +29,7 @@ import java.util.Collections;
 import java.util.Locale;
 
 public final class DeviceMetrics {
-    private static final String PREFS_BATTERY = "cmkagent_battery_real";
+    private static final String PREFS_BATTERY = "cmkagent_battery_real_v2";
     private static final String KEY_MEASURED_FULL_MAH = "measured_full_mah";
     private static final String KEY_MEASURED_FULL_VOLT = "measured_full_volt";
     private static final String KEY_MEASURED_TIMESTAMP = "measured_full_timestamp";
@@ -41,12 +41,12 @@ public final class DeviceMetrics {
         public double temperatureC = Double.NaN;
         public double voltageV = Double.NaN;
         public String status = "Unknown";
-        public double chargeCounterMah = Double.NaN;     // Muatan riil saat ini (mA·h)
+        public double chargeCounterMah = Double.NaN;     // Muatan saat ini (mA·h)
         public double currentNowMa = Double.NaN;
         public double currentAverageMa = Double.NaN;
-        public double designCapacityMah = Double.NaN;    // Nilai rancangan pabrik (4800 mAh)
+        public double designCapacityMah = Double.NaN;    // Kapasitas spesifikasi pabrik (4800 mAh)
         public String designCapacitySource = "Unavailable";
-        public double fullCapacityMah = Double.NaN;      // Estimasi / kapasitas saat 100% penuh
+        public double fullCapacityMah = Double.NaN;      // Kapasitas riil saat 100% penuh
         public double fullChargeVoltageV = Double.NaN;   // Tegangan cut-off saat full charge
         public String fullCapacitySource = "Unavailable";
         public boolean fullCapacityEstimated = false;
@@ -84,66 +84,80 @@ public final class DeviceMetrics {
 
     public static BatteryInfo readBattery(Context context) {
         BatteryInfo out = new BatteryInfo();
-        Intent battery = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        if (battery != null) {
-            int rawLevel = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-            int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
-            if (rawLevel >= 0 && scale > 0) {
-                out.level = (int) Math.round(rawLevel * 100.0 / scale);
-            }
+        if (context == null) return out;
 
-            int tempTenths = battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Integer.MIN_VALUE);
-            if (tempTenths != Integer.MIN_VALUE && tempTenths != 0) {
-                out.temperatureC = tempTenths / 10.0;
-            }
+        // 1. Baca data dasar baterai melalui intent sistem
+        try {
+            Intent battery = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (battery != null) {
+                int rawLevel = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+                if (rawLevel >= 0 && scale > 0) {
+                    out.level = (int) Math.round(rawLevel * 100.0 / scale);
+                }
 
-            int voltageMv = battery.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
-            if (voltageMv > 0) out.voltageV = voltageMv / 1000.0;
+                int tempTenths = battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Integer.MIN_VALUE);
+                if (tempTenths != Integer.MIN_VALUE && tempTenths != 0) {
+                    out.temperatureC = tempTenths / 10.0;
+                }
 
-            int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS,
-                    BatteryManager.BATTERY_STATUS_UNKNOWN);
-            switch (status) {
-                case BatteryManager.BATTERY_STATUS_CHARGING:
-                    out.status = "Charging";
-                    break;
-                case BatteryManager.BATTERY_STATUS_DISCHARGING:
-                    out.status = "Discharging";
-                    break;
-                case BatteryManager.BATTERY_STATUS_FULL:
-                    out.status = "Full";
-                    break;
-                case BatteryManager.BATTERY_STATUS_NOT_CHARGING:
-                    out.status = "Not Charging";
-                    break;
-                default:
-                    out.status = "Unknown";
-            }
-        }
+                int voltageMv = battery.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
+                if (voltageMv > 0) out.voltageV = voltageMv / 1000.0;
 
-        BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
-        if (bm != null) {
-            int chargeCounterUah = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
-            if (validBatteryProperty(chargeCounterUah) && chargeCounterUah > 0) {
-                out.chargeCounterMah = chargeCounterUah / 1000.0;
-            }
-
-            int currentNowUa = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
-            if (validBatteryProperty(currentNowUa)) out.currentNowMa = currentNowUa / 1000.0;
-
-            int currentAvgUa = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE);
-            if (validBatteryProperty(currentAvgUa)) out.currentAverageMa = currentAvgUa / 1000.0;
-
-            // 1. Ambil Cycle Count via API Android 14+ (SDK 34+)
-            // Nilai integer 7 adalah nilai resmi BATTERY_PROPERTY_CYCLE_COUNT agar kompatibel dengan semua target SDK
-            if (Build.VERSION.SDK_INT >= 34) {
-                int cycles = bm.getIntProperty(7);
-                if (validBatteryProperty(cycles) && cycles >= 0) {
-                    out.cycleCount = cycles;
+                int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN);
+                switch (status) {
+                    case BatteryManager.BATTERY_STATUS_CHARGING:
+                        out.status = "Charging";
+                        break;
+                    case BatteryManager.BATTERY_STATUS_DISCHARGING:
+                        out.status = "Discharging";
+                        break;
+                    case BatteryManager.BATTERY_STATUS_FULL:
+                        out.status = "Full";
+                        break;
+                    case BatteryManager.BATTERY_STATUS_NOT_CHARGING:
+                        out.status = "Not Charging";
+                        break;
+                    default:
+                        out.status = "Unknown";
                 }
             }
-        }
+        } catch (Throwable ignored) {}
 
-        // 2. Fallback Cycle Count via Kernel sysfs (Khusus Newland MT93 / Android < 14)
+        // 2. Baca register arus & muatan melalui BatteryManager (Aman dari crash izin)
+        try {
+            BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+            if (bm != null) {
+                try {
+                    int chargeCounterUah = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER);
+                    if (validBatteryProperty(chargeCounterUah) && chargeCounterUah > 0) {
+                        out.chargeCounterMah = chargeCounterUah / 1000.0;
+                    }
+                } catch (Throwable ignored) {}
+
+                try {
+                    int currentNowUa = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW);
+                    if (validBatteryProperty(currentNowUa)) out.currentNowMa = currentNowUa / 1000.0;
+                } catch (Throwable ignored) {}
+
+                try {
+                    int currentAvgUa = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE);
+                    if (validBatteryProperty(currentAvgUa)) out.currentAverageMa = currentAvgUa / 1000.0;
+                } catch (Throwable ignored) {}
+
+                // Ambil Cycle Count via API (Diproteksi agar tidak memicu SecurityException)
+                if (Build.VERSION.SDK_INT >= 34) {
+                    try {
+                        int cycles = bm.getIntProperty(7);
+                        if (validBatteryProperty(cycles) && cycles >= 0) {
+                            out.cycleCount = cycles;
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        // 3. Fallback Cycle Count via Kernel sysfs (Bekerja pada Newland MT93)
         if (out.cycleCount < 0) {
             String[] cyclePaths = {
                     "/sys/class/power_supply/battery/cycle_count",
@@ -152,40 +166,47 @@ public final class DeviceMetrics {
                     "/sys/class/power_supply/battery/device/cycle_count"
             };
             for (String path : cyclePaths) {
-                Double val = readNumber(path);
-                if (val != null && val >= 0) {
-                    out.cycleCount = val.intValue();
-                    break;
-                }
+                try {
+                    Double val = readNumber(path);
+                    if (val != null && val >= 0) {
+                        out.cycleCount = val.intValue();
+                        break;
+                    }
+                } catch (Throwable ignored) {}
             }
         }
 
-        // 3. Tentukan Design Capacity Pabrik (Spesifik Newland MT93 = 4800 mAh)
-        double manual = AgentConfig.getDesignCapacityMah(context);
-        if (isPositive(manual)) {
-            out.designCapacityMah = manual;
-            out.designCapacitySource = "Manual";
-        } else if (isNewlandMt93()) {
-            out.designCapacityMah = 4800.0;
-            out.designCapacitySource = "Newland MT93 Hardware Spec";
-        } else {
-            double profileVal = readPowerProfileCapacityMah(context);
-            if (isPositive(profileVal)) {
-                out.designCapacityMah = profileVal;
-                out.designCapacitySource = "Android PowerProfile";
+        // 4. Tentukan Design Capacity Pabrik (Spesifik Newland MT93 = 4800 mAh)
+        try {
+            double manual = AgentConfig.getDesignCapacityMah(context);
+            if (isPositive(manual)) {
+                out.designCapacityMah = manual;
+                out.designCapacitySource = "Manual";
+            } else if (isNewlandMt93()) {
+                out.designCapacityMah = 4800.0;
+                out.designCapacitySource = "Newland MT93 Hardware Spec";
             } else {
-                double kernelDesign = readChargeCapacityMah("/sys/class/power_supply/battery/charge_full_design");
-                if (isPositive(kernelDesign)) {
-                    out.designCapacityMah = kernelDesign;
-                    out.designCapacitySource = "Kernel charge_full_design";
+                double profileVal = readPowerProfileCapacityMah(context);
+                if (isPositive(profileVal)) {
+                    out.designCapacityMah = profileVal;
+                    out.designCapacitySource = "Android PowerProfile";
                 } else {
-                    out.designCapacityMah = 4800.0;
-                    out.designCapacitySource = "Default 4800 mAh";
+                    double kernelDesign = readChargeCapacityMah("/sys/class/power_supply/battery/charge_full_design");
+                    if (isPositive(kernelDesign)) {
+                        out.designCapacityMah = kernelDesign;
+                        out.designCapacitySource = "Kernel charge_full_design";
+                    } else {
+                        out.designCapacityMah = 4800.0;
+                        out.designCapacitySource = "Default 4800 mAh";
+                    }
                 }
             }
+        } catch (Throwable ignored) {
+            out.designCapacityMah = 4800.0;
+            out.designCapacitySource = "Default 4800 mAh";
         }
 
-        // 4. Baca Node Kernel charge_full jika chip hardware menyediakannya
+        // 5. Cek Node Kernel charge_full jika tersedia
         String[] fullPaths = {
                 "/sys/class/power_supply/battery/charge_full",
                 "/sys/class/power_supply/bms/charge_full",
@@ -193,46 +214,55 @@ public final class DeviceMetrics {
                 "/sys/class/power_supply/battery/full_charge_capacity"
         };
         for (String path : fullPaths) {
-            double full = readChargeCapacityMah(path);
-            if (isPositive(full)) {
-                out.fullCapacityMah = full;
-                out.fullCapacitySource = "Kernel " + path.substring(path.lastIndexOf('/') + 1);
-                break;
-            }
+            try {
+                double full = readChargeCapacityMah(path);
+                if (isPositive(full)) {
+                    out.fullCapacityMah = full;
+                    out.fullCapacitySource = "Kernel " + path.substring(path.lastIndexOf('/') + 1);
+                    break;
+                }
+            } catch (Throwable ignored) {}
         }
 
-        // 5. Evaluasi Pengukuran Nyata (Tanpa Baseline Palsu)
-        SharedPreferences prefs = context.getSharedPreferences(PREFS_BATTERY, Context.MODE_PRIVATE);
-        boolean isFullChargeNow = (out.level == 100) || "Full".equalsIgnoreCase(out.status);
+        // 6. Evaluasi Pengukuran Nyata (Dukungan Kalibrasi Full Charger)
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(PREFS_BATTERY, Context.MODE_PRIVATE);
+            boolean isFullChargeNow = (out.level == 100) || "Full".equalsIgnoreCase(out.status);
 
-        if (isFullChargeNow && isPositive(out.chargeCounterMah)) {
-            // Ketika baterai mencapai 100% atau status Full, simpan kalibrasi langsung
-            prefs.edit()
-                    .putFloat(KEY_MEASURED_FULL_MAH, (float) out.chargeCounterMah)
-                    .putFloat(KEY_MEASURED_FULL_VOLT, (float) out.voltageV)
-                    .putLong(KEY_MEASURED_TIMESTAMP, System.currentTimeMillis())
-                    .apply();
+            if (isFullChargeNow && isPositive(out.chargeCounterMah)) {
+                try {
+                    prefs.edit()
+                            .putString(KEY_MEASURED_FULL_MAH, String.valueOf(out.chargeCounterMah))
+                            .putString(KEY_MEASURED_FULL_VOLT, String.valueOf(out.voltageV))
+                            .putLong(KEY_MEASURED_TIMESTAMP, System.currentTimeMillis())
+                            .apply();
+                } catch (Throwable ignored) {}
 
-            out.fullCapacityMah = out.chargeCounterMah;
-            out.fullChargeVoltageV = out.voltageV;
-            out.fullCapacitySource = "Direct Measurement @ 100% Full Charge";
-        } else if (!isPositive(out.fullCapacityMah)) {
-            // Ambil hasil kalibrasi 100% terakhir jika ada
-            float lastFullMah = prefs.getFloat(KEY_MEASURED_FULL_MAH, -1.0f);
-            float lastFullVolt = prefs.getFloat(KEY_MEASURED_FULL_VOLT, -1.0f);
+                out.fullCapacityMah = out.chargeCounterMah;
+                out.fullChargeVoltageV = out.voltageV;
+                out.fullCapacitySource = "Direct Measurement @ 100% Full Charge";
+            } else if (!isPositive(out.fullCapacityMah)) {
+                double lastFullMah = -1.0;
+                double lastFullVolt = -1.0;
+                try {
+                    String sMah = prefs.getString(KEY_MEASURED_FULL_MAH, null);
+                    if (sMah != null) lastFullMah = Double.parseDouble(sMah);
+                    String sVolt = prefs.getString(KEY_MEASURED_FULL_VOLT, null);
+                    if (sVolt != null) lastFullVolt = Double.parseDouble(sVolt);
+                } catch (Throwable ignored) {}
 
-            if (lastFullMah > 0) {
-                out.fullCapacityMah = lastFullMah;
-                out.fullChargeVoltageV = lastFullVolt > 0 ? lastFullVolt : Double.NaN;
-                out.fullCapacitySource = "Last Full Charge Calibration";
-            } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
-                // Perhitungan matematis dinamis: muatan saat ini dibagi persentase desimal
-                out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
-                out.fullCapacitySource = "Dynamic Real-time (" + out.level + "% State)";
+                if (lastFullMah > 0) {
+                    out.fullCapacityMah = lastFullMah;
+                    out.fullChargeVoltageV = lastFullVolt > 0 ? lastFullVolt : Double.NaN;
+                    out.fullCapacitySource = "Last Full Charge Calibration";
+                } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
+                    out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
+                    out.fullCapacitySource = "Dynamic Real-time (" + out.level + "% State)";
+                }
             }
-        }
+        } catch (Throwable ignored) {}
 
-        // 6. Hitung Persentase Kesehatan Riil (Murni Matematis Tanpa Manipulasi)
+        // 7. Hitung Persentase Kesehatan Riil
         if (isPositive(out.designCapacityMah) && isPositive(out.fullCapacityMah)) {
             out.healthPercent = (out.fullCapacityMah / out.designCapacityMah) * 100.0;
         }
@@ -479,22 +509,16 @@ public final class DeviceMetrics {
         return Double.NaN;
     }
 
-    private static double readEnergyCapacityMah(String path, double voltageV) {
-        Double raw = readNumber(path);
-        if (raw == null || raw <= 0 || !isPositive(voltageV)) return Double.NaN;
-        double voltageMv = voltageV * 1000.0;
-        if (raw > 100000) return raw / voltageMv;
-        return Double.NaN;
-    }
-
     private static Double readNumber(String path) {
-        File f = new File(path);
-        if (!f.isFile() || !f.canRead()) return null;
-        try (BufferedReader reader = new BufferedReader(new FileReader(f))) {
-            String line = reader.readLine();
-            if (line == null) return null;
-            return Double.parseDouble(line.trim());
-        } catch (Exception ignored) {
+        try {
+            File f = new File(path);
+            if (!f.isFile() || !f.canRead()) return null;
+            try (BufferedReader reader = new BufferedReader(new FileReader(f))) {
+                String line = reader.readLine();
+                if (line == null) return null;
+                return Double.parseDouble(line.trim());
+            }
+        } catch (Throwable ignored) {
             return null;
         }
     }
@@ -516,10 +540,6 @@ public final class DeviceMetrics {
 
     private static boolean isPositive(double value) {
         return !Double.isNaN(value) && !Double.isInfinite(value) && value > 0;
-    }
-
-    private static double clamp(double value, double min, double max) {
-        return Math.max(min, Math.min(max, value));
     }
 
     private static double bytesToGb(long bytes) {
