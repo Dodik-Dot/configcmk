@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class CheckmkOutput {
-    public static final String VERSION = "1.3.3";
+    public static final String VERSION = "1.3.4";
     private static final String PREFS_CACHE = "cmkagent_metrics_cache";
 
     // Interval Caching Metrik
@@ -69,7 +69,7 @@ public final class CheckmkOutput {
         sb.append("<<<local:sep(0)>>>\n");
         sb.append(buildAgentStatusLine(context, stats)).append('\n');
         sb.append(buildBatteryLevelLine(battery)).append('\n');
-        sb.append(buildBatteryHealthLine(battery)).append('\n'); // 1 Baris gabungan Health + Cycles
+        sb.append(buildBatteryHealthLine(battery)).append('\n');
         sb.append(buildRamLine(ram)).append('\n');
         sb.append(buildWifiLine(wifi)).append('\n');
         sb.append(buildAndroidInfoLine(device)).append('\n');
