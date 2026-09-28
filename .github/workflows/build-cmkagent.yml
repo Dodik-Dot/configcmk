@@ -67,7 +67,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: cmkagent-v1.3.2-debug
-          path: android/cmkagent-v1.3.2-debug.apk
-          if-no-files-found: error
-          retention-days: 30
+        name: cmkagent-v1.3.3-stable
+        path: app/build/outputs/apk/**/*.apk
