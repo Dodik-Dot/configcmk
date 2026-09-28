@@ -9,9 +9,9 @@ android {
     defaultConfig {
         applicationId 'com.bcp.checkmkagent'
         minSdk 26
-        targetSdk 33          // Kembalikan ke 33 agar Foreground Service stabil di Android 14/16
-        versionCode 7         // Naikkan versi ke 7
-        versionName '1.3.3'
+        targetSdk 33          // Tetap di 33 agar Foreground Service stabil pada PDA enterprise
+        versionCode 8         // Naikkan ke 8 untuk update build baru
+        versionName '1.3.4'
     }
 
     buildTypes {
