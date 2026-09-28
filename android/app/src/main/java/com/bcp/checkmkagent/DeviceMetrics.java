@@ -4,7 +4,6 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
@@ -29,10 +28,6 @@ import java.util.Collections;
 import java.util.Locale;
 
 public final class DeviceMetrics {
-    private static final String PREFS_BATTERY = "cmkagent_battery_real_v2";
-    private static final String KEY_MEASURED_FULL_MAH = "measured_full_mah";
-    private static final String KEY_MEASURED_FULL_VOLT = "measured_full_volt";
-    private static final String KEY_MEASURED_TIMESTAMP = "measured_full_timestamp";
 
     private DeviceMetrics() {}
 
@@ -41,18 +36,18 @@ public final class DeviceMetrics {
         public double temperatureC = Double.NaN;
         public double voltageV = Double.NaN;
         public String status = "Unknown";
-        public double chargeCounterMah = Double.NaN;     // Muatan saat ini (mA·h)
+        public double chargeCounterMah = Double.NaN;
         public double currentNowMa = Double.NaN;
         public double currentAverageMa = Double.NaN;
-        public double designCapacityMah = Double.NaN;    // Kapasitas spesifikasi pabrik (4800 mAh)
+        public double designCapacityMah = Double.NaN;
         public String designCapacitySource = "Unavailable";
-        public double fullCapacityMah = Double.NaN;      // Kapasitas riil saat 100% penuh
-        public double fullChargeVoltageV = Double.NaN;   // Tegangan cut-off saat full charge
+        public double fullCapacityMah = Double.NaN;
+        public double fullChargeVoltageV = Double.NaN;
         public String fullCapacitySource = "Unavailable";
         public boolean fullCapacityEstimated = false;
-        public double healthPercent = Double.NaN;        // Persentase kesehatan nyata
+        public double healthPercent = Double.NaN;
         public int estimateSamples = 0;
-        public int cycleCount = -1;                      // Akumulasi siklus pengisian
+        public int cycleCount = -1;
     }
 
     public static final class UsageInfo {
@@ -86,7 +81,6 @@ public final class DeviceMetrics {
         BatteryInfo out = new BatteryInfo();
         if (context == null) return out;
 
-        // 1. Baca data dasar baterai melalui intent sistem
         try {
             Intent battery = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
             if (battery != null) {
@@ -124,7 +118,6 @@ public final class DeviceMetrics {
             }
         } catch (Throwable ignored) {}
 
-        // 2. Baca register arus & muatan melalui BatteryManager (Aman dari crash izin)
         try {
             BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
             if (bm != null) {
@@ -145,7 +138,6 @@ public final class DeviceMetrics {
                     if (validBatteryProperty(currentAvgUa)) out.currentAverageMa = currentAvgUa / 1000.0;
                 } catch (Throwable ignored) {}
 
-                // Ambil Cycle Count via API (Diproteksi agar tidak memicu SecurityException)
                 if (Build.VERSION.SDK_INT >= 34) {
                     try {
                         int cycles = bm.getIntProperty(7);
@@ -157,13 +149,13 @@ public final class DeviceMetrics {
             }
         } catch (Throwable ignored) {}
 
-        // 3. Fallback Cycle Count via Kernel sysfs (Bekerja pada Newland MT93)
         if (out.cycleCount < 0) {
             String[] cyclePaths = {
                     "/sys/class/power_supply/battery/cycle_count",
                     "/sys/class/power_supply/bms/cycle_count",
                     "/sys/class/power_supply/battery/battery_cycle",
-                    "/sys/class/power_supply/battery/device/cycle_count"
+                    "/sys/class/power_supply/battery/device/cycle_count",
+                    "/sys/devices/platform/charger/power_supply/battery/cycle_count"
             };
             for (String path : cyclePaths) {
                 try {
@@ -176,95 +168,98 @@ public final class DeviceMetrics {
             }
         }
 
-        // 4. Tentukan Design Capacity Pabrik (Spesifik Newland MT93 = 4800 mAh)
+        BatteryHistory.updateChargeSession(context, out.level, out.status, out.chargeCounterMah, out.voltageV);
+        out.estimateSamples = BatteryHistory.getSampleCount(context);
+
         try {
             double manual = AgentConfig.getDesignCapacityMah(context);
             if (isPositive(manual)) {
                 out.designCapacityMah = manual;
-                out.designCapacitySource = "Manual";
-            } else if (isNewlandMt93()) {
-                out.designCapacityMah = 4800.0;
-                out.designCapacitySource = "Newland MT93 Hardware Spec";
+                out.designCapacitySource = "Manual Override";
             } else {
                 double profileVal = readPowerProfileCapacityMah(context);
                 if (isPositive(profileVal)) {
                     out.designCapacityMah = profileVal;
-                    out.designCapacitySource = "Android PowerProfile";
+                    out.designCapacitySource = "Android OS PowerProfile";
                 } else {
-                    double kernelDesign = readChargeCapacityMah("/sys/class/power_supply/battery/charge_full_design");
-                    if (isPositive(kernelDesign)) {
-                        out.designCapacityMah = kernelDesign;
-                        out.designCapacitySource = "Kernel charge_full_design";
-                    } else {
-                        out.designCapacityMah = 4800.0;
-                        out.designCapacitySource = "Default 4800 mAh";
+                    String[] designPaths = {
+                            "/sys/class/power_supply/battery/charge_full_design",
+                            "/sys/class/power_supply/bms/charge_full_design",
+                            "/sys/class/power_supply/battery/device/charge_full_design",
+                            "/sys/devices/platform/charger/power_supply/battery/charge_full_design",
+                            "/sys/class/power_supply/battery/design_capacity",
+                            "/sys/class/power_supply/battery/battery_full_design"
+                    };
+                    for (String path : designPaths) {
+                        double kernelDesign = readChargeCapacityMah(path);
+                        if (isPositive(kernelDesign)) {
+                            out.designCapacityMah = kernelDesign;
+                            out.designCapacitySource = "Kernel (" + path.substring(path.lastIndexOf('/') + 1) + ")";
+                            break;
+                        }
                     }
                 }
             }
-        } catch (Throwable ignored) {
-            out.designCapacityMah = 4800.0;
-            out.designCapacitySource = "Default 4800 mAh";
+        } catch (Throwable ignored) {}
+
+        String[] hwSohPaths = {
+                "/sys/class/power_supply/battery/soh",
+                "/sys/class/power_supply/battery/battery_soh",
+                "/sys/class/power_supply/bms/battery_soh"
+        };
+        for (String p : hwSohPaths) {
+            Double soh = readNumber(p);
+            if (soh != null && soh > 10.0 && soh <= 100.0) {
+                out.healthPercent = soh;
+                if (isPositive(out.designCapacityMah)) {
+                    out.fullCapacityMah = (soh / 100.0) * out.designCapacityMah;
+                }
+                out.fullCapacitySource = "Hardware Fuel Gauge (BMS)";
+                return out;
+            }
         }
 
-        // 5. Cek Node Kernel charge_full jika tersedia
-        String[] fullPaths = {
-                "/sys/class/power_supply/battery/charge_full",
-                "/sys/class/power_supply/bms/charge_full",
-                "/sys/class/power_supply/main/charge_full",
-                "/sys/class/power_supply/battery/full_charge_capacity"
-        };
-        for (String path : fullPaths) {
-            try {
+        double calibratedFull = BatteryHistory.getCalibratedFullChargeMah(context);
+        double medianAccuMeter = BatteryHistory.getMedianCapacity(context);
+
+        if (isPositive(calibratedFull) && ("Full".equalsIgnoreCase(out.status) || out.level == 100)) {
+            out.fullCapacityMah = calibratedFull;
+            out.fullChargeVoltageV = BatteryHistory.getCalibratedFullVoltage(context);
+            out.fullCapacitySource = "100% Full Charge Calibration";
+        } else if (isPositive(medianAccuMeter)) {
+            out.fullCapacityMah = medianAccuMeter;
+            out.fullChargeVoltageV = BatteryHistory.getCalibratedFullVoltage(context);
+            out.fullCapacitySource = "AccuMeter Median (" + out.estimateSamples + " sessions)";
+            out.fullCapacityEstimated = true;
+        } else {
+            String[] fullPaths = {
+                    "/sys/class/power_supply/battery/charge_full",
+                    "/sys/class/power_supply/bms/charge_full",
+                    "/sys/class/power_supply/main/charge_full"
+            };
+            for (String path : fullPaths) {
                 double full = readChargeCapacityMah(path);
                 if (isPositive(full)) {
                     out.fullCapacityMah = full;
                     out.fullCapacitySource = "Kernel " + path.substring(path.lastIndexOf('/') + 1);
                     break;
                 }
-            } catch (Throwable ignored) {}
+            }
         }
 
-        // 6. Evaluasi Pengukuran Nyata (Dukungan Kalibrasi Full Charger)
-        try {
-            SharedPreferences prefs = context.getSharedPreferences(PREFS_BATTERY, Context.MODE_PRIVATE);
-            boolean isFullChargeNow = (out.level == 100) || "Full".equalsIgnoreCase(out.status);
-
-            if (isFullChargeNow && isPositive(out.chargeCounterMah)) {
-                try {
-                    prefs.edit()
-                            .putString(KEY_MEASURED_FULL_MAH, String.valueOf(out.chargeCounterMah))
-                            .putString(KEY_MEASURED_FULL_VOLT, String.valueOf(out.voltageV))
-                            .putLong(KEY_MEASURED_TIMESTAMP, System.currentTimeMillis())
-                            .apply();
-                } catch (Throwable ignored) {}
-
-                out.fullCapacityMah = out.chargeCounterMah;
-                out.fullChargeVoltageV = out.voltageV;
-                out.fullCapacitySource = "Direct Measurement @ 100% Full Charge";
-            } else if (!isPositive(out.fullCapacityMah)) {
-                double lastFullMah = -1.0;
-                double lastFullVolt = -1.0;
-                try {
-                    String sMah = prefs.getString(KEY_MEASURED_FULL_MAH, null);
-                    if (sMah != null) lastFullMah = Double.parseDouble(sMah);
-                    String sVolt = prefs.getString(KEY_MEASURED_FULL_VOLT, null);
-                    if (sVolt != null) lastFullVolt = Double.parseDouble(sVolt);
-                } catch (Throwable ignored) {}
-
-                if (lastFullMah > 0) {
-                    out.fullCapacityMah = lastFullMah;
-                    out.fullChargeVoltageV = lastFullVolt > 0 ? lastFullVolt : Double.NaN;
-                    out.fullCapacitySource = "Last Full Charge Calibration";
-                } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
-                    out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
-                    out.fullCapacitySource = "Dynamic Real-time (" + out.level + "% State)";
-                }
+        if (!isPositive(out.fullCapacityMah)) {
+            if (isPositive(calibratedFull)) {
+                out.fullCapacityMah = calibratedFull;
+                out.fullCapacitySource = "Historical Full Calibration";
+            } else if (out.level >= 20 && isPositive(out.chargeCounterMah)) {
+                out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
+                out.fullCapacitySource = "Initial Dynamic (" + out.level + "% State)";
+                out.fullCapacityEstimated = true;
             }
-        } catch (Throwable ignored) {}
+        }
 
-        // 7. Hitung Persentase Kesehatan Riil
         if (isPositive(out.designCapacityMah) && isPositive(out.fullCapacityMah)) {
-            out.healthPercent = (out.fullCapacityMah / out.designCapacityMah) * 100.0;
+            out.healthPercent = Math.min(100.0, (out.fullCapacityMah / out.designCapacityMah) * 100.0);
         }
 
         return out;
@@ -468,7 +463,7 @@ public final class DeviceMetrics {
         out.androidVersion = safe(Build.VERSION.RELEASE);
         out.sdk = Build.VERSION.SDK_INT;
         out.uptimeMs = SystemClock.elapsedRealtime();
-        out.profile = isNewlandMt93() ? "Newland MT93" : "Generic Android";
+        out.profile = out.manufacturer + " " + out.model;
         return out;
     }
 
@@ -487,12 +482,6 @@ public final class DeviceMetrics {
         return "N/A";
     }
 
-    public static boolean isNewlandMt93() {
-        String joined = (safe(Build.MANUFACTURER) + " " + safe(Build.MODEL) + " "
-                + safe(Build.PRODUCT)).toUpperCase(Locale.US);
-        return joined.contains("NEWLAND") || joined.contains("MT93");
-    }
-
     private static boolean isUsableRssi(int rssi) {
         return rssi > -127 && rssi <= 0;
     }
@@ -505,7 +494,7 @@ public final class DeviceMetrics {
         Double raw = readNumber(path);
         if (raw == null || raw <= 0) return Double.NaN;
         if (raw > 100000) return raw / 1000.0;
-        if (raw > 1000 && raw < 30000) return raw;
+        if (raw >= 500 && raw <= 30000) return raw;
         return Double.NaN;
     }
 
@@ -532,7 +521,7 @@ public final class DeviceMetrics {
             Object value = method.invoke(profile);
             if (value instanceof Double) {
                 double mah = (Double) value;
-                return mah > 0 ? mah : Double.NaN;
+                if (mah >= 500.0 && mah <= 30000.0) return mah;
             }
         } catch (Throwable ignored) {}
         return Double.NaN;
