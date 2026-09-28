@@ -5,9 +5,12 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 import java.io.BufferedWriter;
 import java.io.OutputStreamWriter;
@@ -27,7 +30,11 @@ public class CheckmkAgentService extends Service {
     private volatile boolean running = false;
     private ServerSocket serverSocket;
     private ExecutorService listenerExecutor;
+    private ExecutorService clientWorkerExecutor;
     private ScheduledExecutorService pushExecutor;
+
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
     @Override
     public void onCreate() {
@@ -45,13 +52,50 @@ public class CheckmkAgentService extends Service {
     private synchronized void startHybridIfNeeded() {
         if (running) return;
         running = true;
+        acquireLocks();
         AgentStats.recordStart(this);
         startPullListener();
         startPushScheduler();
     }
 
+    private void acquireLocks() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && (wakeLock == null || !wakeLock.isHeld())) {
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "cmkagent:service_wakelock");
+                wakeLock.acquire();
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null && (wifiLock == null || !wifiLock.isHeld())) {
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "cmkagent:service_wifilock");
+                wifiLock.acquire();
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void releaseLocks() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+        } catch (Throwable ignored) {}
+        wakeLock = null;
+
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) {
+                wifiLock.release();
+            }
+        } catch (Throwable ignored) {}
+        wifiLock = null;
+    }
+
     private void startPullListener() {
         listenerExecutor = Executors.newSingleThreadExecutor();
+        clientWorkerExecutor = Executors.newCachedThreadPool();
+
         listenerExecutor.execute(() -> {
             int port = AgentConfig.getPort(this);
             try {
@@ -64,7 +108,7 @@ public class CheckmkAgentService extends Service {
                     try {
                         Socket client = serverSocket.accept();
                         client.setSoTimeout(5000);
-                        serveClient(client);
+                        clientWorkerExecutor.execute(() -> serveClient(client));
                     } catch (Exception e) {
                         if (running) updateNotification("Pull error: " + shortMessage(e));
                     }
@@ -117,7 +161,9 @@ public class CheckmkAgentService extends Service {
         AgentStats.recordStop(this);
         closeServerSocket();
         if (listenerExecutor != null) listenerExecutor.shutdownNow();
+        if (clientWorkerExecutor != null) clientWorkerExecutor.shutdownNow();
         if (pushExecutor != null) pushExecutor.shutdownNow();
+        releaseLocks();
         super.onDestroy();
     }
 
