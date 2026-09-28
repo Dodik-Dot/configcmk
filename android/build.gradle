@@ -1,13 +1,3 @@
-android {
-    ...
-    defaultConfig {
-        applicationId "com.bcp.checkmkagent"
-        minSdkVersion 24
-        targetSdkVersion 34
-        versionCode 33          // Naikkan 1 angka dari versi sebelumnya (misal dari 32 ke 33)
-        versionName "1.3.3"     // Setel ke 1.3.3 Stable
-
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-    }
-    ...
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
 }
