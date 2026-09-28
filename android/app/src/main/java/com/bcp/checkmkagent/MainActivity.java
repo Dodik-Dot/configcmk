@@ -13,6 +13,7 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
@@ -149,12 +150,21 @@ public class MainActivity extends Activity {
         systemSection.content.addView(systemText, wrap());
         root.addView(systemSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        networkSection = section("NETWORK", "Warehouse Wi-Fi visibility", false);
+        networkSection = section("NETWORK", "Network status & permissions", false);
         networkText = bodyText();
         networkSection.content.addView(networkText, wrap());
-        Button permissionButton = actionButton("OPEN APP PERMISSIONS", C_CARD_ALT, C_TEXT);
+
+        LinearLayout netActions = new LinearLayout(this);
+        netActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button permissionButton = actionButton("APP PERMISSIONS", C_CARD_ALT, C_TEXT);
         permissionButton.setOnClickListener(v -> openAppSettings());
-        networkSection.content.addView(permissionButton, matchWrapMargin(0, 12, 0, 0));
+        Button batteryOptButton = actionButton("BATTERY UNRESTRICTED", C_CARD_ALT, C_TEXT);
+        batteryOptButton.setOnClickListener(v -> requestIgnoreBatteryOptimizations());
+        netActions.addView(permissionButton, weightButton());
+        LinearLayout.LayoutParams secondP = weightButton();
+        secondP.setMargins(dp(8), 0, 0, 0);
+        netActions.addView(batteryOptButton, secondP);
+        networkSection.content.addView(netActions, matchWrapMargin(0, 12, 0, 0));
         root.addView(networkSection.card, matchWrapMargin(0, 0, 0, 12));
 
         deviceSection = section("DEVICE", "Hardware & Android profile", false);
@@ -169,11 +179,11 @@ public class MainActivity extends Activity {
         designCapacityInput = input(settingsSection.content,
                 "Design Capacity (mAh, 0 = auto)",
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL,
-                "MT93 auto profile = 5000 mAh");
+                "0 = Otomatis deteksi dari Android / ROM");
         allowedServerInput = input(settingsSection.content,
                 "Allowed Checkmk Server IP",
                 InputType.TYPE_CLASS_TEXT,
-                "Kosong = semua IP; produksi: 192.168.55.112");
+                "Kosong = semua IP; contoh: 192.168.55.112");
 
         pushEnabledInput = new CheckBox(this);
         pushEnabledInput.setText("Aktifkan PUSH backup (Hybrid)");
@@ -232,14 +242,14 @@ public class MainActivity extends Activity {
         settingsSection.content.addView(stop, matchWrap());
         root.addView(settingsSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        diagnosticsSection = section("DIAGNOSTICS", "Useful when Checkmk cannot pull the PDA", false);
+        diagnosticsSection = section("DIAGNOSTICS", "Status & counter", false);
         diagnosticsText = bodyText();
         diagnosticsText.setTextIsSelectable(true);
         diagnosticsSection.content.addView(diagnosticsText, wrap());
         root.addView(diagnosticsSection.card, matchWrapMargin(0, 0, 0, 12));
 
         TextView footer = new TextView(this);
-        footer.setText("Collection: HYBRID. Pull tetap primary; push menjaga warm backup sesuai interval. Tap section untuk expand/collapse.\n\nDibuat oleh IT OPS HQEJBNT");
+        footer.setText("Universal Android Agent • Checkmk Hybrid\nDibuat oleh IT OPS HQEJBNT");
         footer.setTextColor(C_MUTED);
         footer.setTextSize(12);
         footer.setGravity(Gravity.CENTER);
@@ -268,7 +278,7 @@ public class MainActivity extends Activity {
         title.setTextSize(29);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         TextView subtitle = new TextView(this);
-        subtitle.setText("Checkmk Android hybrid agent  •  v" + CheckmkOutput.VERSION);
+        subtitle.setText("Checkmk Universal Android Agent  •  v" + CheckmkOutput.VERSION);
         subtitle.setTextColor(C_MUTED);
         subtitle.setTextSize(13);
         text.addView(title);
@@ -513,6 +523,7 @@ public class MainActivity extends Activity {
         String nearbyPermission = permissionState(Manifest.permission.NEARBY_WIFI_DEVICES, 33);
         String locationPermission = permissionState(Manifest.permission.ACCESS_FINE_LOCATION, 23);
         String locationService = isLocationEnabled() ? "ON" : "OFF";
+        boolean ignoringBatteryOpt = isIgnoringBatteryOptimizations();
 
         networkSection.summary.setText((wifi.connected ? "Wi-Fi Connected" : "Wi-Fi Unavailable")
                 + "  •  " + rssi + "  •  " + wifi.ip);
@@ -527,7 +538,8 @@ public class MainActivity extends Activity {
                         + "Details source : " + wifi.detailsSource + "\n"
                         + "Nearby Wi-Fi   : " + nearbyPermission + "\n"
                         + "Fine location  : " + locationPermission + "\n"
-                        + "Location svc   : " + locationService
+                        + "Location svc   : " + locationService + "\n"
+                        + "Battery Opt    : " + (ignoringBatteryOpt ? "Unrestricted (Safe)" : "Optimized (Risk of sleep)")
         );
 
         deviceSection.summary.setText(device.manufacturer + " " + device.model
@@ -556,7 +568,7 @@ public class MainActivity extends Activity {
                         + "Last push code : " + stats.lastPushCode + "\n"
                         + "Last push msg  : " + stats.lastPushMessage + "\n"
                         + "Foreground svc : " + (stats.running ? "running" : "stopped") + "\n"
-                        + "Battery samples: " + b.estimateSamples + "\n"
+                        + "AccuMeter smpl : " + b.estimateSamples + "\n"
                         + "Package        : com.bcp.checkmkagent"
         );
     }
@@ -654,6 +666,26 @@ public class MainActivity extends Activity {
                     || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    private boolean isIgnoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        }
+        return true;
+    }
+
+    private void requestIgnoreBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            } catch (Exception e) {
+                openAppSettings();
+            }
         }
     }
 
