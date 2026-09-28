@@ -12,7 +12,7 @@ public final class CheckmkOutput {
     public static final String VERSION = "1.3.3";
     private static final String PREFS_CACHE = "cmkagent_metrics_cache";
 
-    // Definisi Interval Caching (dalam detik)
+    // Interval Caching Metrik
     private static final long INTERVAL_TEMP_SEC = 1800L;       // 30 menit
     private static final long INTERVAL_CURRENT_SEC = 3600L;     // 1 jam
     private static final long INTERVAL_TRANSPORT_SEC = 10800L;  // 3 jam
@@ -41,7 +41,6 @@ public final class CheckmkOutput {
         long lastSec = p.getLong(key + "_ts", 0L);
         String cachedLine = p.getString(key + "_line", null);
 
-        // Perbarui data jika cache kosong, interval kedaluwarsa, atau jam sistem berubah
         if (cachedLine == null || (nowSec - lastSec) >= intervalSec || lastSec > nowSec) {
             String newLine = generator.generate();
             p.edit()
@@ -66,7 +65,7 @@ public final class CheckmkOutput {
         sb.append("AgentOS: android\n");
         sb.append("Hostname: ").append(AgentConfig.getHostname(context)).append("\n\n");
 
-        // 1. Service Real-time (Diambil setiap siklus pull Checkmk)
+        // 1. Service Real-time
         sb.append("<<<local:sep(0)>>>\n");
         sb.append(buildAgentStatusLine(context, stats)).append('\n');
         sb.append(buildBatteryLevelLine(battery)).append('\n');
@@ -75,35 +74,35 @@ public final class CheckmkOutput {
         sb.append(buildWifiLine(wifi)).append('\n');
         sb.append(buildAndroidInfoLine(device)).append('\n');
 
-        // 2. Battery_Temperature: 30 menit sekali (1800 detik)
+        // 2. Battery_Temperature (30 menit)
         CachedEntry tempEntry = getOrUpdateCache(context, "bat_temp", INTERVAL_TEMP_SEC,
                 () -> buildBatteryTemperatureLine(battery));
         sb.append("<<<local:cached(").append(tempEntry.epochSec).append(",")
                 .append(INTERVAL_TEMP_SEC).append("):sep(0)>>>\n");
         sb.append(tempEntry.line).append('\n');
 
-        // 3. Battery_Current: 1 jam sekali (3600 detik)
+        // 3. Battery_Current (1 jam)
         CachedEntry currentEntry = getOrUpdateCache(context, "bat_current", INTERVAL_CURRENT_SEC,
                 () -> buildBatteryCurrentLine(battery));
         sb.append("<<<local:cached(").append(currentEntry.epochSec).append(",")
                 .append(INTERVAL_CURRENT_SEC).append("):sep(0)>>>\n");
         sb.append(currentEntry.line).append('\n');
 
-        // 4. Transport_Status: 3 jam sekali (10800 detik)
+        // 4. Transport_Status (3 jam)
         CachedEntry transportEntry = getOrUpdateCache(context, "transport", INTERVAL_TRANSPORT_SEC,
                 () -> buildTransportStatusLine(context, stats));
         sb.append("<<<local:cached(").append(transportEntry.epochSec).append(",")
                 .append(INTERVAL_TRANSPORT_SEC).append("):sep(0)>>>\n");
         sb.append(transportEntry.line).append('\n');
 
-        // 5. Battery_Voltage: 1 hari sekali (86400 detik)
+        // 5. Battery_Voltage (1 hari)
         CachedEntry voltageEntry = getOrUpdateCache(context, "bat_voltage", INTERVAL_VOLTAGE_SEC,
                 () -> buildBatteryVoltageLine(battery));
         sb.append("<<<local:cached(").append(voltageEntry.epochSec).append(",")
                 .append(INTERVAL_VOLTAGE_SEC).append("):sep(0)>>>\n");
         sb.append(voltageEntry.line).append('\n');
 
-        // 6. Storage_Usage: 1 hari sekali (86400 detik)
+        // 6. Storage_Usage (1 hari)
         CachedEntry storageEntry = getOrUpdateCache(context, "storage", INTERVAL_STORAGE_SEC,
                 () -> buildStorageLine(DeviceMetrics.readStorage()));
         sb.append("<<<local:cached(").append(storageEntry.epochSec).append(",")
@@ -179,17 +178,11 @@ public final class CheckmkOutput {
                 + " | Charging State : " + b.status;
     }
 
-    /**
-     * 1 Baris Service Tunggal: Health + Cycles + Full Spec + Current Charge
-     */
     private static String buildBatteryHealthLine(DeviceMetrics.BatteryInfo b) {
         if (Double.isNaN(b.healthPercent)) {
             return "0 \"Health_Battery\" - Status : OK | Health : N/A (Calculating real metrics)";
         }
 
-        // Ambang evaluasi:
-        // WARN: Health < 80% ATAU Cycles >= 500
-        // CRIT: Health < 65% ATAU Cycles >= 800
         int state = 0;
         if (b.healthPercent < 65.0 || (b.cycleCount >= 800)) {
             state = 2;
@@ -203,7 +196,6 @@ public final class CheckmkOutput {
         String fullVoltStr = Double.isNaN(b.fullChargeVoltageV) ? "" : String.format(Locale.US, " | Full Voltage : %.2f V", b.fullChargeVoltageV);
         String cycleStr = (b.cycleCount >= 0) ? (" | Cycles : " + b.cycleCount) : " | Cycles : N/A";
 
-        // Grafik RRD ganda di dalam 1 service: grafik % kesehatan dan grafik total siklus
         String metric = "battery_health=" + String.format(Locale.US, "%.1f", b.healthPercent) + ";80;65;0;100";
         if (b.cycleCount >= 0) {
             metric += "|battery_cycles=" + b.cycleCount + ";500;800;0";
