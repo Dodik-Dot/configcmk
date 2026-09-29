@@ -179,7 +179,7 @@ public class MainActivity extends Activity {
         designCapacityInput = input(settingsSection.content,
                 "Design Capacity (mAh, 0 = auto)",
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL,
-                "0 = Otomatis deteksi dari Android / ROM");
+                "0 = Otomatis (MT93 BTY95L = 5000 mAh)");
         allowedServerInput = input(settingsSection.content,
                 "Allowed Checkmk Server IP",
                 InputType.TYPE_CLASS_TEXT,
@@ -491,7 +491,7 @@ public class MainActivity extends Activity {
         String voltage = Double.isNaN(b.voltageV) ? "N/A"
                 : String.format(Locale.US, "%.2f V", b.voltageV);
         String current = Double.isNaN(b.currentNowMa) ? "N/A"
-                : String.format(Locale.US, "%.0f mA", b.currentNowMa);
+                : String.format(Locale.US, "%.0f mAh", b.chargeCounterMah);
 
         batterySection.summary.setText((b.level >= 0 ? b.level + "%" : "N/A")
                 + "  •  " + b.status + "  •  Health " + health);
@@ -503,7 +503,7 @@ public class MainActivity extends Activity {
                         + "Capacity source : " + b.fullCapacitySource + "\n"
                         + "Temperature     : " + temp + "\n"
                         + "Voltage         : " + voltage + "\n"
-                        + "Current now     : " + current
+                        + "Current charge  : " + current
         );
 
         systemSection.summary.setText("RAM " + Math.round(ram.usedPercent) + "%  •  Storage "
@@ -525,10 +525,10 @@ public class MainActivity extends Activity {
         String locationService = isLocationEnabled() ? "ON" : "OFF";
         boolean ignoringBatteryOpt = isIgnoringBatteryOptimizations();
 
-        networkSection.summary.setText((wifi.connected ? "Wi-Fi Connected" : "Wi-Fi Unavailable")
+        networkSection.summary.setText((wifi.connected ? "Wi-Fi Connected" : "Not Connected")
                 + "  •  " + rssi + "  •  " + wifi.ip);
         networkText.setText(
-                "Wi-Fi          : " + (wifi.connected ? "Connected" : "Unavailable") + "\n"
+                "Wi-Fi          : " + (wifi.connected ? "Connected" : "Not Connected") + "\n"
                         + "SSID           : " + wifi.ssid + "\n"
                         + "Signal         : " + rssi + "\n"
                         + "Link speed     : " + speed + "\n"
