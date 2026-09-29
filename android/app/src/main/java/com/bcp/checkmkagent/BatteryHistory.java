@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Locale;
 
 public final class BatteryHistory {
-    private static final String PREFS = "cmkagent_accumeter_v1";
+    private static final String PREFS = "cmkagent_accumeter_v2";
 
     private static final String K_SAMPLES = "accumeter_capacity_samples";
     private static final String K_CALIBRATED_FULL_MAH = "calibrated_full_mah";
@@ -35,7 +35,7 @@ public final class BatteryHistory {
         boolean isCharging = "Charging".equalsIgnoreCase(status);
         boolean wasCharging = prefs.getBoolean(K_IS_CHARGING, false);
 
-        if ((level == 100 || "Full".equalsIgnoreCase(status)) && chargeCounterMah > 600) {
+        if ((level == 100 || "Full".equalsIgnoreCase(status)) && chargeCounterMah > 2000) {
             prefs.edit()
                     .putFloat(K_CALIBRATED_FULL_MAH, (float) chargeCounterMah)
                     .putFloat(K_CALIBRATED_FULL_VOLT, (float) voltageV)
@@ -124,7 +124,7 @@ public final class BatteryHistory {
         if (context == null) return Double.NaN;
         float val = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getFloat(K_CALIBRATED_FULL_MAH, -1f);
-        return val > 600 ? val : Double.NaN;
+        return val > 2000 ? val : Double.NaN;
     }
 
     public static double getCalibratedFullVoltage(Context context) {
