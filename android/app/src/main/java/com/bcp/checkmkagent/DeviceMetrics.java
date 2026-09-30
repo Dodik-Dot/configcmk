@@ -29,9 +29,6 @@ import java.util.Locale;
 
 public final class DeviceMetrics {
 
-    // Titik acuan kapasitas penuh register hardware Newland MT93
-    public static final double HARDWARE_FULL_SCALE_MAH = 2946.0;
-
     private DeviceMetrics() {}
 
     public static final class BatteryInfo {
@@ -43,9 +40,9 @@ public final class DeviceMetrics {
         public double chargeCounterMah = Double.NaN;
         public double currentNowMa = Double.NaN;
         public double currentAverageMa = Double.NaN;
-        public double designCapacityMah = 4800.0;
-        public String designCapacitySource = "AIDA64 Profile (4800 mAh)";
-        public double fullCapacityMah = 2946.0;
+        public double designCapacityMah = Double.NaN;
+        public String designCapacitySource = "Unavailable";
+        public double fullCapacityMah = Double.NaN;
         public double fullChargeVoltageV = Double.NaN;
         public String fullCapacitySource = "Unavailable";
         public boolean fullCapacityEstimated = false;
@@ -84,6 +81,8 @@ public final class DeviceMetrics {
     public static BatteryInfo readBattery(Context context) {
         BatteryInfo out = new BatteryInfo();
         if (context == null) return out;
+
+        boolean isMt93 = isNewlandMt93();
 
         Intent battery = null;
         try {
@@ -193,51 +192,78 @@ public final class DeviceMetrics {
             }
         }
 
-        // 1. Ambil Design Capacity sesuai AIDA64 / PowerProfile OS (4800 mAh)
+        // 1. Tentukan Design Capacity secara dinamis dari sistem Android
         try {
             double manual = AgentConfig.getDesignCapacityMah(context);
-            if (isPositive(manual) && manual != 5000.0 && manual != 2946.0) {
+            if (isPositive(manual)) {
                 out.designCapacityMah = manual;
                 out.designCapacitySource = "Manual Configuration";
             } else {
                 double profileVal = readPowerProfileCapacityMah(context);
                 if (isPositive(profileVal)) {
                     out.designCapacityMah = profileVal;
-                    out.designCapacitySource = "AIDA64 Profile (" + Math.round(profileVal) + " mAh)";
+                    out.designCapacitySource = "Android System (" + Math.round(profileVal) + " mAh)";
                 } else {
-                    out.designCapacityMah = 4800.0;
-                    out.designCapacitySource = "AIDA64 Default (4800 mAh)";
+                    out.designCapacityMah = isMt93 ? 4800.0 : 5000.0;
+                    out.designCapacitySource = "Factory Spec (" + Math.round(out.designCapacityMah) + " mAh)";
                 }
             }
         } catch (Throwable ignored) {
-            out.designCapacityMah = 4800.0;
-            out.designCapacitySource = "AIDA64 Default (4800 mAh)";
+            out.designCapacityMah = isMt93 ? 4800.0 : 5000.0;
+            out.designCapacitySource = "Factory Spec";
         }
 
-        // Muatan baterai saat ini
+        // 2. Evaluasi Muatan Saat Ini (Current Charge)
         if (!isPositive(out.chargeCounterMah) && out.level >= 0) {
-            out.chargeCounterMah = Math.round(HARDWARE_FULL_SCALE_MAH * (out.level / 100.0));
+            double referenceFull = isMt93 ? 2946.0 : out.designCapacityMah;
+            out.chargeCounterMah = Math.round(referenceFull * (out.level / 100.0));
         }
 
-        // Simpan sesi pengisian
+        // Simpan sesi pengisian untuk tracking riwayat
         BatteryHistory.updateChargeSession(context, out.level, out.status, out.chargeCounterMah, out.voltageV);
         out.estimateSamples = BatteryHistory.getSampleCount(context);
 
-        // 2. Evaluasi Full Capacity & Health (Dihitung dari basis full charge 2946 mAh)
-        if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
-            out.fullCapacityMah = HARDWARE_FULL_SCALE_MAH;
-            out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.34;
-            out.healthPercent = 100.0;
-            out.fullCapacitySource = "100% Full Cut-off (2946 mAh)";
-        } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
-            out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
-            // Health dihitung relatif terhadap batas full 2946 mAh agar tidak false critical
-            out.healthPercent = Math.min(100.0, (out.fullCapacityMah / HARDWARE_FULL_SCALE_MAH) * 100.0);
-            out.fullCapacitySource = "Hardware Normal (" + out.level + "% State)";
+        // 3. Logika Evaluasi Kesehatan: Terpisah Khusus Newland MT93 vs Perangkat Normal
+        if (isMt93) {
+            // =========================================================================
+            // KHUSUS NEWLAND MT93 (Mengatasi skala virtual firmware 2946 mAh)
+            // =========================================================================
+            final double MT93_FULL_SCALE = 2946.0;
+
+            if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
+                out.fullCapacityMah = MT93_FULL_SCALE;
+                out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.34;
+                out.healthPercent = 100.0;
+                out.fullCapacitySource = "100% Full Cut-off (2946 mAh)";
+            } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
+                out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
+                out.healthPercent = Math.min(100.0, (out.fullCapacityMah / MT93_FULL_SCALE) * 100.0);
+                out.fullCapacitySource = "Hardware Normal (" + out.level + "% State)";
+            } else {
+                out.fullCapacityMah = MT93_FULL_SCALE;
+                out.healthPercent = 100.0;
+                out.fullCapacitySource = "System Baseline";
+            }
         } else {
-            out.fullCapacityMah = HARDWARE_FULL_SCALE_MAH;
-            out.healthPercent = 100.0;
-            out.fullCapacitySource = "Hardware Baseline";
+            // =========================================================================
+            // PERANGKAT NORMAL (Smartphone Xiaomi, Samsung, dsb.)
+            // =========================================================================
+            if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
+                out.fullCapacityMah = (isPositive(out.chargeCounterMah) && out.chargeCounterMah > 2000.0)
+                        ? out.chargeCounterMah : out.designCapacityMah;
+                out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.35;
+                out.healthPercent = Math.min(100.0, (out.fullCapacityMah / out.designCapacityMah) * 100.0);
+                out.fullCapacitySource = "100% Full Cut-off";
+            } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
+                out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
+                out.healthPercent = Math.min(100.0, (out.fullCapacityMah / out.designCapacityMah) * 100.0);
+                out.fullCapacitySource = "Dynamic Estimate (" + out.level + "% State)";
+                out.fullCapacityEstimated = true;
+            } else {
+                out.fullCapacityMah = out.designCapacityMah;
+                out.healthPercent = 100.0;
+                out.fullCapacitySource = "System Baseline";
+            }
         }
 
         return out;
@@ -462,8 +488,8 @@ public final class DeviceMetrics {
 
     public static boolean isNewlandMt93() {
         String joined = (safe(Build.MANUFACTURER) + " " + safe(Build.MODEL) + " "
-                + safe(Build.PRODUCT)).toUpperCase(Locale.US);
-        return joined.contains("NEWLAND") || joined.contains("MT93");
+                + safe(Build.PRODUCT) + " " + safe(Build.DEVICE)).toUpperCase(Locale.US);
+        return joined.contains("NEWLAND") || joined.contains("MT93") || joined.contains("NLS-MT93");
     }
 
     private static boolean isUsableRssi(int rssi) {
