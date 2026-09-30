@@ -29,6 +29,9 @@ import java.util.Locale;
 
 public final class DeviceMetrics {
 
+    // Titik acuan kapasitas penuh register hardware Newland MT93
+    public static final double HARDWARE_FULL_SCALE_MAH = 2946.0;
+
     private DeviceMetrics() {}
 
     public static final class BatteryInfo {
@@ -40,9 +43,9 @@ public final class DeviceMetrics {
         public double chargeCounterMah = Double.NaN;
         public double currentNowMa = Double.NaN;
         public double currentAverageMa = Double.NaN;
-        public double designCapacityMah = 5000.0;
-        public String designCapacitySource = "Hardware Label BTY95L (5000 mAh)";
-        public double fullCapacityMah = 5000.0;
+        public double designCapacityMah = 4800.0;
+        public String designCapacitySource = "AIDA64 Profile (4800 mAh)";
+        public double fullCapacityMah = 2946.0;
         public double fullChargeVoltageV = Double.NaN;
         public String fullCapacitySource = "Unavailable";
         public boolean fullCapacityEstimated = false;
@@ -190,77 +193,51 @@ public final class DeviceMetrics {
             }
         }
 
+        // 1. Ambil Design Capacity sesuai AIDA64 / PowerProfile OS (4800 mAh)
         try {
             double manual = AgentConfig.getDesignCapacityMah(context);
-            if (isPositive(manual) && manual != 4800.0) {
+            if (isPositive(manual) && manual != 5000.0 && manual != 2946.0) {
                 out.designCapacityMah = manual;
                 out.designCapacitySource = "Manual Configuration";
-            } else if (isNewlandMt93()) {
-                out.designCapacityMah = 5000.0;
-                out.designCapacitySource = "Hardware Label BTY95L (5000 mAh)";
             } else {
                 double profileVal = readPowerProfileCapacityMah(context);
                 if (isPositive(profileVal)) {
                     out.designCapacityMah = profileVal;
-                    out.designCapacitySource = "Android OS PowerProfile";
+                    out.designCapacitySource = "AIDA64 Profile (" + Math.round(profileVal) + " mAh)";
                 } else {
-                    out.designCapacityMah = 5000.0;
-                    out.designCapacitySource = "Default 5000 mAh";
+                    out.designCapacityMah = 4800.0;
+                    out.designCapacitySource = "AIDA64 Default (4800 mAh)";
                 }
             }
         } catch (Throwable ignored) {
-            out.designCapacityMah = 5000.0;
-            out.designCapacitySource = "Default 5000 mAh";
+            out.designCapacityMah = 4800.0;
+            out.designCapacitySource = "AIDA64 Default (4800 mAh)";
         }
 
-        if (isNewlandMt93() && isPositive(out.chargeCounterMah)) {
-            if (out.chargeCounterMah <= 3000.0) {
-                out.chargeCounterMah = Math.round(out.chargeCounterMah * (5000.0 / 2946.0));
-            }
-        } else if (!isPositive(out.chargeCounterMah) && out.level >= 0) {
-            out.chargeCounterMah = Math.round(out.designCapacityMah * (out.level / 100.0));
+        // Muatan baterai saat ini
+        if (!isPositive(out.chargeCounterMah) && out.level >= 0) {
+            out.chargeCounterMah = Math.round(HARDWARE_FULL_SCALE_MAH * (out.level / 100.0));
         }
 
+        // Simpan sesi pengisian
         BatteryHistory.updateChargeSession(context, out.level, out.status, out.chargeCounterMah, out.voltageV);
         out.estimateSamples = BatteryHistory.getSampleCount(context);
 
-        double calibratedFull = BatteryHistory.getCalibratedFullChargeMah(context);
-        double medianAccuMeter = BatteryHistory.getMedianCapacity(context);
-
+        // 2. Evaluasi Full Capacity & Health (Dihitung dari basis full charge 2946 mAh)
         if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
-            out.fullCapacityMah = out.designCapacityMah;
-            out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.35;
+            out.fullCapacityMah = HARDWARE_FULL_SCALE_MAH;
+            out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.34;
             out.healthPercent = 100.0;
-            out.fullCapacitySource = "100% Full Cut-off Calibration";
-        } else if (isPositive(calibratedFull) && calibratedFull >= 4000.0) {
-            out.fullCapacityMah = calibratedFull;
-            out.fullChargeVoltageV = BatteryHistory.getCalibratedFullVoltage(context);
-            out.fullCapacitySource = "Full Charge Calibration";
-            out.healthPercent = Math.min(100.0, (out.fullCapacityMah / out.designCapacityMah) * 100.0);
-        } else if (isPositive(medianAccuMeter) && medianAccuMeter >= 4000.0) {
-            out.fullCapacityMah = medianAccuMeter;
-            out.fullChargeVoltageV = BatteryHistory.getCalibratedFullVoltage(context);
-            out.fullCapacitySource = "AccuMeter Median (" + out.estimateSamples + " sessions)";
-            out.fullCapacityEstimated = true;
-            out.healthPercent = Math.min(100.0, (out.fullCapacityMah / out.designCapacityMah) * 100.0);
+            out.fullCapacitySource = "100% Full Cut-off (2946 mAh)";
+        } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
+            out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
+            // Health dihitung relatif terhadap batas full 2946 mAh agar tidak false critical
+            out.healthPercent = Math.min(100.0, (out.fullCapacityMah / HARDWARE_FULL_SCALE_MAH) * 100.0);
+            out.fullCapacitySource = "Hardware Normal (" + out.level + "% State)";
         } else {
-            boolean isGood = "Good".equalsIgnoreCase(out.healthStatus)
-                    || (out.voltageV >= 3.70 && out.level >= 15);
-            if (isGood) {
-                out.fullCapacityMah = out.designCapacityMah;
-                out.fullChargeVoltageV = 4.35;
-                out.healthPercent = 100.0;
-                out.fullCapacitySource = "Hardware Normal (BTY95L Good)";
-            } else if (out.level >= 20 && isPositive(out.chargeCounterMah)) {
-                out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
-                out.healthPercent = Math.min(100.0, (out.fullCapacityMah / out.designCapacityMah) * 100.0);
-                out.fullCapacitySource = "Dynamic Estimate (" + out.level + "% State)";
-                out.fullCapacityEstimated = true;
-            }
-        }
-
-        if (Double.isNaN(out.healthPercent) && isPositive(out.designCapacityMah) && isPositive(out.fullCapacityMah)) {
-            out.healthPercent = Math.min(100.0, (out.fullCapacityMah / out.designCapacityMah) * 100.0);
+            out.fullCapacityMah = HARDWARE_FULL_SCALE_MAH;
+            out.healthPercent = 100.0;
+            out.fullCapacitySource = "Hardware Baseline";
         }
 
         return out;
