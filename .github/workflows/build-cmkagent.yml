@@ -55,12 +55,26 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      # Langkah Kunci: Gunakan Keystore Tetap dari Base64
-      - name: Restore Consistent Signing Keystore
+      # Validasi atau generate keystore PKCS12 yang valid
+      - name: Ensure Valid Signing Keystore
         shell: bash
         run: |
-          echo "/u3+7QAAAAIAAAABAAAAAQAIY21rYWdlbnQAAAGX236m2AAABTIwggUuMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDAzCB/wYDVR0jBIH7MIH4gBS0G1iFzT75wX6GzX008K3jS/tOZaGBu6SBtDCBsTEPMA0GA1UEBhMHSUQxEDAOBgNVBAgTB0Vhc3RKYXZhMQ8wDQYDVQQHEwZLZWRpcmkxFDASBgNVBAoTC0hRRUpCTlQgSVQxEzARBgNVBAsTCk5ldHdvcmsgT3BzMRowGAYDVQQDExFjbWthZ2VudC1zaWduaW5nMSAwHgYJKoZIhvcNAQkBFhFpdEBocWVqYm50LmNvbYIBADAfBgNVHSMEGDAWgBS0G1iFzT75wX6GzX008K3jS/tOZTAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwMwDQYJKoZIhvcNAQELBQADggEBAIEz" | base64 -d > android/app/cmkagent.keystore || \
-          keytool -genkeypair -v -keystore android/app/cmkagent.keystore -storepass android -alias cmkagent -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=cmkagent, OU=IT, O=BCP, L=Kediri, ST=EastJava, C=ID"
+          if ! keytool -list -keystore android/app/cmkagent.keystore -storepass android >/dev/null 2>&1; then
+            echo "Keystore tidak ditemukan atau corrupt. Membuat keystore baru yang valid..."
+            rm -f android/app/cmkagent.keystore
+            keytool -genkeypair -v \
+              -keystore android/app/cmkagent.keystore \
+              -storetype PKCS12 \
+              -storepass android \
+              -alias cmkagent \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=cmkagent, OU=IT, O=BCP, L=Kediri, ST=EastJava, C=ID"
+          else
+            echo "Keystore valid ditemukan."
+          fi
 
       - name: Build cmkagent debug APK
         working-directory: android
@@ -71,8 +85,11 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-debug.apk \
              android/cmkagent-v1.3.4.apk
 
-      - name: Upload APK
+      # Upload APK bersama file keystore sebagai artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cmkagent-v1.3.4
-          path: android/cmkagent-v1.3.4.apk
+          path: |
+            android/cmkagent-v1.3.4.apk
+            android/app/cmkagent.keystore
