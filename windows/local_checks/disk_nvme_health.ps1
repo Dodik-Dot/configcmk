@@ -1,7 +1,6 @@
 # =====================================================================
 # Local Check Checkmk: Smartctl Storage Health Monitor (Windows)
-# Engine: smartctl.exe JSON Parser with Multi-Vendor SATA/NVMe Fix
-# + Intel VMD Bypass via Intel MAS CLI
+# Engine: smartctl.exe JSON Parser + Intel VMD Bypass via Intel MAS CLI
 # Scheduled to run once a day at 16:00
 # =====================================================================
 $ErrorActionPreference = 'SilentlyContinue'
@@ -33,7 +32,7 @@ if ($NeedUpdate) {
 
     foreach ($disk in$disks) {
         $i =$disk.Index
-        $merk = if ($disk.Model) {$disk.Model.Trim() } else { "Model Tidak Diketahui" }
+        $merk = if ($disk.Model) {$disk.Model.Trim() } else { "Model_Tidak_Diketahui" }
         
         $json_raw =$null
         if ($SmartctlBin) {
@@ -44,7 +43,7 @@ if ($NeedUpdate) {
         if ($json_raw) { $drive =$json_raw | ConvertFrom-Json }
 
         # ====================================================================
-        # FALLBACK INTEL VMD: Jika smartctl gagal (terhalang VMD)
+        # FALLBACK INTEL VMD: Jika smartctl gagal atau terhalang VMD
         # ====================================================================
         if (-not $drive -or -not $drive.smart_status) {$masPath = "C:\Program Files\Intel\Intel(R) Memory and Storage Tool\intelmas.exe"
             
@@ -67,10 +66,11 @@ if ($NeedUpdate) {
                     
                     $detail = "Drive: SSD/NVMe (VMD) \vert{} Merk: $merk | Kesehatan: $health\% \vert{} Suhu:$temp | Total Dipakai: N/A | Prediksi: Berdasarkan Wear Leveling | SMART: PASSED"
                     $CleanMerk =$merk -replace '[^\w\s-]', ''
-                    "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
+                    $outputLine = "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail"
+                    $outputLine \vert{} Out-File -FilePath$CacheFile -Encoding utf8 -Append
                 }
             }
-            continue # Lewati pemrosesan ke bawah karena smartctl terblokir VMD
+            continue
         }
 
         # ====================================================================
@@ -204,7 +204,8 @@ if ($NeedUpdate) {
 
         # Format Nama Service Checkmk
         $CleanMerk =$merk -replace '[^\w\s-]', ''
-        "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
+        $outputLine = "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail"
+        $outputLine \vert{} Out-File -FilePath$CacheFile -Encoding utf8 -Append
     }
 }
 
