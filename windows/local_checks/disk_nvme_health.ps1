@@ -33,12 +33,12 @@ if ($NeedUpdate) {
     foreach ($disk in$disks) {
         $i =$disk.Index
         $merk = if ($disk.Model) {$disk.Model.Trim() } else { "Model_Tidak_Diketahui" }
-        
+
         $json_raw =$null
         if ($SmartctlBin) {
             $json_raw = &$SmartctlBin -j -a "/dev/pd$i" 2>$null
         }
-        
+
         $drive =$null
         if ($json_raw) { $drive =$json_raw | ConvertFrom-Json }
 
@@ -46,24 +46,24 @@ if ($NeedUpdate) {
         # FALLBACK INTEL VMD: Jika smartctl gagal atau terhalang VMD
         # ====================================================================
         if (-not $drive -or -not $drive.smart_status) {$masPath = "C:\Program Files\Intel\Intel(R) Memory and Storage Tool\intelmas.exe"
-            
+
             if (Test-Path $masPath) {$masOutput = & $masPath show -smart 2>$null
-                
+
                 if ($masOutput -match "PercentageUsed" -or $masOutput -match "AvailableSpare") {
                     $health = 100$temp = 0
-                    
+
                     foreach ($line in$masOutput) {
-                        if ($line -match "PercentageUsed\s+:\s+(\d+)") { 
-                            $health = 100 - [int]$matches[1] 
+                        if ($line -match "PercentageUsed\s+:\s+(\d+)") {
+                            $health = 100 - [int]$matches[1]
                         }
-                        if ($line -match "Temperature\s+:\s+(\d+)") { 
+                        if ($line -match "Temperature\s+:\s+(\d+)") {
                             $temp = "$([int]$matches[1]) Celcius"
                         }
                     }
-                    
+
                     $kode = 0
                     if ($health -le 70) {$kode = 2 } elseif ($health -le 85) {$kode = 1 }
-                    
+
                     $detail = "Drive: SSD/NVMe (VMD) \vert{} Merk: $merk | Kesehatan: $health\% \vert{} Suhu:$temp | Total Dipakai: N/A | Prediksi: Berdasarkan Wear Leveling | SMART: PASSED"
                     $CleanMerk =$merk -replace '[^\w\s-]', ''
                     $outputLine = "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail"
@@ -105,14 +105,14 @@ if ($NeedUpdate) {
                 $realloc =$drive.ata_smart_attributes.table | Where-Object { $_.name -match "Reallocated_Sector" -or $_.name -match "Pending_Sector" }
                 foreach ($item in$realloc) { $bad_sectors += [int]$item.raw.value }
             }
-            
+
             if ($bad_sectors -gt 0) {
                 $health_pct = "WARNING ($bad_sectors Bad Sector)"
                 if ($kode -eq 0) { $kode = 1 }             } else {$health_pct = "Sehat (0 Bad Sector)"
             }
             $estimasi_umur = "Tidak bisa dihitung (HDD dinilai dari Bad Sector)"
             $detail = "Drive: $tipe | Merk: $merk \vert{} Kesehatan:$health_pct | Suhu: $temp \vert{} Total Dipakai:$poh | Prediksi: $estimasi_umur \vert{} SMART:$status"
-        } 
+        }
         else {
             # === MODE SSD / NVMe ===
             $tipe = "SSD/NVMe"
@@ -128,17 +128,17 @@ if ($NeedUpdate) {
                 $sisa_health = [Math]::Max(0, (100 -$wear_terpakai))
                 $health_pct = "$sisa_health%"
                 if ($sisa_health -le 70) {$kode = 2 } elseif ($sisa_health -le 85) {$kode = 1 }
-                
+
                 $r_units =$drive.nvme_smart_health_information_log.data_units_read
                 $w_units =$drive.nvme_smart_health_information_log.data_units_written
                 if ($null -ne$r_units) { $total_read = [math]::Round(($r_units * 512000) / 1TB, 2) }
                 if ($null -ne$w_units) { $total_write = [math]::Round(($w_units * 512000) / 1TB, 2) }
-            } 
+            }
             # B. KASUS 2: SATA SSD
             elseif ($drive.ata_smart_attributes.table) {$tipe = "SSD Sata"
                 $table =$drive.ata_smart_attributes.table
 
-                $attrHealth = $table \vert{} Where-Object {$_.id -in @(169, 231, 202, 177, 232, 233) -or 
+                $attrHealth = $table \vert{} Where-Object {$_.id -in @(169, 231, 202, 177, 232, 233) -or
                     $_.name -match "Wearout|Life|Remaining|Endurance|Available_Reservd"
                 } | Select-Object -First 1
 
@@ -149,7 +149,7 @@ if ($NeedUpdate) {
                         $sisa_health = [int]$attrHealth.value
                     }
                     $wear_terpakai = [Math]::Max(0, (100 -$sisa_health))
-                    $health_pct = "$sisa_health%"
+                        $health_pct = "$sisa_health%"
                     if ($sisa_health -le 70) {$kode = 2 } elseif ($sisa_health -le 85) {$kode = 1 }
                 }
 
