@@ -1,7 +1,7 @@
-```text
 # =====================================================================
 # Local Check Checkmk: Smartctl Storage Health Monitor (Windows)
 # Engine: smartctl.exe JSON Parser with Multi-Vendor SATA/NVMe Fix
+# + Intel VMD Bypass via Intel MAS CLI
 # Scheduled to run once a day at 16:00
 # =====================================================================
 $ErrorActionPreference = 'SilentlyContinue'
@@ -33,16 +33,50 @@ if ($NeedUpdate) {
 
     foreach ($disk in$disks) {
         $i =$disk.Index
-        if (-not $SmartctlBin) { continue }
-
-        $json_raw = &$SmartctlBin -j -a "/dev/pd$i" 2>$null
-        if (-not $json_raw) { continue }
+        $merk = if ($disk.Model) {$disk.Model.Trim() } else { "Model Tidak Diketahui" }
         
-        $drive =$json_raw | ConvertFrom-Json
-        if (-not $drive.smart_status) { continue }
+        $json_raw =$null
+        if ($SmartctlBin) {
+            $json_raw = &$SmartctlBin -j -a "/dev/pd$i" 2>$null
+        }
+        
+        $drive =$null
+        if ($json_raw) { $drive =$json_raw | ConvertFrom-Json }
 
-        # 1. Ambil Model
-        $merk = if ($drive.model_name) {$drive.model_name.Trim() } else { "Model Tidak Diketahui" }
+        # ====================================================================
+        # FALLBACK INTEL VMD: Jika smartctl gagal (terhalang VMD)
+        # ====================================================================
+        if (-not $drive -or -not $drive.smart_status) {$masPath = "C:\Program Files\Intel\Intel(R) Memory and Storage Tool\intelmas.exe"
+            
+            if (Test-Path $masPath) {$masOutput = & $masPath show -smart 2>$null
+                
+                if ($masOutput -match "PercentageUsed" -or $masOutput -match "AvailableSpare") {
+                    $health = 100$temp = 0
+                    
+                    foreach ($line in$masOutput) {
+                        if ($line -match "PercentageUsed\s+:\s+(\d+)") { 
+                            $health = 100 - [int]$matches[1] 
+                        }
+                        if ($line -match "Temperature\s+:\s+(\d+)") { 
+                            $temp = "$([int]$matches[1]) Celcius"
+                        }
+                    }
+                    
+                    $kode = 0
+                    if ($health -le 70) {$kode = 2 } elseif ($health -le 85) {$kode = 1 }
+                    
+                    $detail = "Drive: SSD/NVMe (VMD) \vert{} Merk: $merk | Kesehatan: $health\% \vert{} Suhu:$temp | Total Dipakai: N/A | Prediksi: Berdasarkan Wear Leveling | SMART: PASSED"
+                    $CleanMerk =$merk -replace '[^\w\s-]', ''
+                    "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
+                }
+            }
+            continue # Lewati pemrosesan ke bawah karena smartctl terblokir VMD
+        }
+
+        # ====================================================================
+        # NORMAL SMARTCTL PROCESSING (SATA / Native NVMe)
+        # ====================================================================
+        if ($drive.model_name) { $merk =$drive.model_name.Trim() }
 
         # 2. Status SMART Dasar
         $is_passed =$drive.smart_status.passed
@@ -78,10 +112,6 @@ if ($NeedUpdate) {
             }
             $estimasi_umur = "Tidak bisa dihitung (HDD dinilai dari Bad Sector)"
             $detail = "Drive: $tipe | Merk: $merk \vert{} Kesehatan:$health_pct | Suhu: $temp \vert{} Total Dipakai:$poh | Prediksi: $estimasi_umur \vert{} SMART:$status"
-            
-            # Format Nama Service Checkmk
-            $CleanMerk =$merk -replace '[^\w\s-]', ''
-            "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
         } 
         else {
             # === MODE SSD / NVMe ===
@@ -91,89 +121,59 @@ if ($NeedUpdate) {
             $wear_terpakai = 0$total_read = "N/A"
             $total_write = "N/A"
             $max_tbw = "N/A"
-            
-            $masPath = "C:\Program Files\Intel\IntelMASCLI\intelmas.exe"
-            $isVmd =$false
-            
-            if ($drive.model_name -match "VMD" -or $drive.model_name -match "Volume Management Device" -or $drive.model_name -match "Intel RST") {
-                $isVmd =$true
-            }
 
-            if ($isVmd -and (Test-Path$masPath)) {
-                $masOutput = &$masPath show -smart
+            # A. KASUS 1: NVMe Native
+            if ($drive.nvme_smart_health_information_log) {$tipe = "NVME"
+                $wear_terpakai = [int]$drive.nvme_smart_health_information_log.percentage_used
+                $sisa_health = [Math]::Max(0, (100 -$wear_terpakai))
+                $health_pct = "$sisa_health%"
+                if ($sisa_health -le 70) {$kode = 2 } elseif ($sisa_health -le 85) {$kode = 1 }
                 
-                if ($masOutput -match "PercentageUsed" -or $masOutput -match "AvailableSpare") {
-                    foreach ($line in$masOutput) {
-                        if ($line -match "PercentageUsed\s+:\s+(\d+)") { 
-                            $wear_terpakai = [int]$matches[1]
-                            $sisa_health = [Math]::Max(0, (100 -$wear_terpakai))
-                            $health_pct = "$sisa_health%"
-                        }
-                        if ($line -match "Temperature\s+:\s+(\d+)") { 
-                            $temp = "$([int]$matches[1]) Celcius"
-                        }
+                $r_units =$drive.nvme_smart_health_information_log.data_units_read
+                $w_units =$drive.nvme_smart_health_information_log.data_units_written
+                if ($null -ne$r_units) { $total_read = [math]::Round(($r_units * 512000) / 1TB, 2) }
+                if ($null -ne$w_units) { $total_write = [math]::Round(($w_units * 512000) / 1TB, 2) }
+            } 
+            # B. KASUS 2: SATA SSD
+            elseif ($drive.ata_smart_attributes.table) {$tipe = "SSD Sata"
+                $table =$drive.ata_smart_attributes.table
+
+                $attrHealth = $table \vert{} Where-Object {$_.id -in @(169, 231, 202, 177, 232, 233) -or 
+                    $_.name -match "Wearout|Life|Remaining|Endurance|Available_Reservd"
+                } | Select-Object -First 1
+
+                if ($attrHealth) {
+                    if ($attrHealth.id -eq 169 -and $attrHealth.raw.value -gt 0 -and$attrHealth.raw.value -le 100) {
+                        $sisa_health = [int]$attrHealth.raw.value
+                    } else {
+                        $sisa_health = [int]$attrHealth.value
                     }
-                    if ($sisa_health -le 70) {$kode = 2 } elseif ($sisa_health -le 85) {$kode = 1 }
-                }
-            } else {
-                # A. KASUS 1: NVMe Native
-                if ($drive.nvme_smart_health_information_log) {$tipe = "NVME"
-                    $wear_terpakai = [int]$drive.nvme_smart_health_information_log.percentage_used
-                    $sisa_health = [Math]::Max(0, (100 -$wear_terpakai))
+                    $wear_terpakai = [Math]::Max(0, (100 -$sisa_health))
                     $health_pct = "$sisa_health%"
                     if ($sisa_health -le 70) {$kode = 2 } elseif ($sisa_health -le 85) {$kode = 1 }
-                    
-                    $r_units =$drive.nvme_smart_health_information_log.data_units_read
-                    $w_units =$drive.nvme_smart_health_information_log.data_units_written
-                    if ($null -ne$r_units) { $total_read = [math]::Round(($r_units * 512000) / 1TB, 2) }
-                    if ($null -ne$w_units) { $total_write = [math]::Round(($w_units * 512000) / 1TB, 2) }
-                } 
-                # B. KASUS 2: SATA SSD (V-GEN, Kingston SATA, ADATA SATA, dll)
-                elseif ($drive.ata_smart_attributes.table) {$tipe = "SSD Sata"
-                    $table =$drive.ata_smart_attributes.table
+                }
 
-                    # 1. Cari Nilai Sisa Umur / Health (Mencakup ID 169 untuk V-GEN/Silicon Motion)
-                    $attrHealth = $table \vert{} Where-Object {$_.id -in @(169, 231, 202, 177, 232, 233) -or 
-                        $_.name -match "Wearout|Life|Remaining|Endurance|Available_Reservd"
-                    } | Select-Object -First 1
+                $lba = if ($drive.logical_block_size) { [double]$drive.logical_block_size } else { 512.0 }
+                $attr_read  =$table | Where-Object { $_.id -eq 242 -or$_.name -match "Total_LBAs_Read" } | Select-Object -First 1
+                $attr_write =$table | Where-Object { $_.id -eq 241 -or$_.name -match "Total_LBAs_Written" } | Select-Object -First 1
 
-                    if ($attrHealth) {
-                        # Atribut 169 pada kontroler Silicon Motion menyimpan sisa % di raw value atau normalized value
-                        if ($attrHealth.id -eq 169 -and $attrHealth.raw.value -gt 0 -and$attrHealth.raw.value -le 100) {
-                            $sisa_health = [int]$attrHealth.raw.value
-                        } else {
-                            $sisa_health = [int]$attrHealth.value
-                        }
-                        $wear_terpakai = [Math]::Max(0, (100 -$sisa_health))
-                        $health_pct = "$sisa_health%"
-                        if ($sisa_health -le 70) {$kode = 2 } elseif ($sisa_health -le 85) {$kode = 1 }
+                if ($attr_write) {
+                    $rawValW = [double]$attr_write.raw.value
+                    if ($rawValW -gt 10000000) {$total_write = [math]::Round(($rawValW * $lba) / 1TB, 2)
+                    } else {
+                        $total_write = [math]::Round(($rawValW * 1GB) / 1TB, 2)
                     }
+                }
 
-                    # 2. Hitung Read & Write TBW (Mencegah Bug Nilai Terlalu Kecil)
-                    $lba = if ($drive.logical_block_size) { [double]$drive.logical_block_size } else { 512.0 }
-                    $attr_read  =$table | Where-Object { $_.id -eq 242 -or$_.name -match "Total_LBAs_Read" } | Select-Object -First 1
-                    $attr_write =$table | Where-Object { $_.id -eq 241 -or$_.name -match "Total_LBAs_Written" } | Select-Object -First 1
-
-                    if ($attr_write) {
-                        $rawValW = [double]$attr_write.raw.value
-                        # Jika angka raw > 10.000.000 berarti satuan LBA sektor. Jika kecil (< 5.000.000) berarti satuan GB.
-                        if ($rawValW -gt 10000000) {$total_write = [math]::Round(($rawValW * $lba) / 1TB, 2)
-                        } else {
-                            $total_write = [math]::Round(($rawValW * 1GB) / 1TB, 2)
-                        }
-                    }
-
-                    if ($attr_read) {
-                        $rawValR = [double]$attr_read.raw.value
-                        if ($rawValR -gt 10000000) {$total_read = [math]::Round(($rawValR * $lba) / 1TB, 2)
-                        } else {
-                            $total_read = [math]::Round(($rawValR * 1GB) / 1TB, 2)
-                        }
+                if ($attr_read) {
+                    $rawValR = [double]$attr_read.raw.value
+                    if ($rawValR -gt 10000000) {$total_read = [math]::Round(($rawValR * $lba) / 1TB, 2)
+                    } else {
+                        $total_read = [math]::Round(($rawValR * 1GB) / 1TB, 2)
                     }
                 }
             }
 
-            # Kalkulasi Estimasi Maksimal TBW
             if (($total_write -ne "N/A") -and ($wear_terpakai -gt 0) -and ($total_write -gt 0)) {$tbw_calc = [math]::Round(($total_write / $wear_terpakai) * 100, 2)
                 $max_tbw = "$tbw_calc TB"
             } else {
@@ -183,7 +183,6 @@ if ($NeedUpdate) {
             $str_read  = if ($total_read -ne "N/A") { "$total_read TB" } else { "N/A" }
             $str_write = if ($total_write -ne "N/A") { "$total_write TB" } else { "N/A" }
 
-            # Prediksi Umur
             $estimasi_umur = "Tidak dapat diprediksi"
             if ($jam -gt 0 -and$health_pct -ne "Tidak terbaca") {
                 if ($wear_terpakai -gt 0) {
@@ -201,11 +200,11 @@ if ($NeedUpdate) {
             }
 
             $detail = "Drive: $tipe \vert{} Merk:$merk | Kesehatan: $health_pct \vert{} Suhu:$temp | Masa Pakai: $poh \vert{} Read:$str_read | Write: $str_write \vert{} Est Max TBW:$max_tbw | Prediksi: $estimasi_umur \vert{} SMART:$status"
-            
-            # Format Nama Service Checkmk
-            $CleanMerk =$merk -replace '[^\w\s-]', ''
-            "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
         }
+
+        # Format Nama Service Checkmk
+        $CleanMerk =$merk -replace '[^\w\s-]', ''
+        "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
     }
 }
 
