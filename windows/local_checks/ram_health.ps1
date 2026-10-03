@@ -72,11 +72,19 @@ if ($NeedUpdate) {
         $ActiveStr = "None"
     }
     
-    $SlotOutput = "Used Slots: $UsedSlots/$TotalSlots ($EmptySlots Empty) ❘ Active Modules: [$ActiveStr]"
+    $SlotOutput = "Used Slots: $UsedSlots/$TotalSlots ($EmptySlots Empty) | Active Modules: [$ActiveStr]"
     
     # --- 2. PEMBACAAN LOG MEMTESTER ---
     if (-not (Test-Path $LogFile)) {
-        $Output = "0 `"Health_RAM`" - Status : OK | Result: Passed | Tested Size: N/A | Last Test: No test run yet | $SlotOutput | Log: Waiting for first scheduled memtester run on Saturday 11:00 AM."
+        # Hitung 20% dari Free RAM saat ini secara dinamis sebagai estimasi awal
+        $FreeKB = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).FreePhysicalMemory
+        if ($FreeKB) {
+            $EstMB = [Math]::Max(128, [Math]::Floor(($FreeKB / 1024) * 0.20))
+            $EstSize = "${EstMB}M"
+        } else {
+            $EstSize = "N/A"
+        }
+        $Output = "0 `"Health_RAM`" - Status : OK | Result: Passed | Tested Size: $EstSize | Last Test: No test run yet | $SlotOutput | Log: Waiting for first scheduled memtester run on Saturday 11:00 AM."
     } else {
         $LogContent = Get-Content $LogFile -ErrorAction SilentlyContinue
         
@@ -84,9 +92,19 @@ if ($NeedUpdate) {
         $SampleLine = $LogContent | Where-Object { $_ -like "SAMPLE_SIZE:*" } | Select-Object -Last 1
         $StartLine = $LogContent | Where-Object { $_ -like "=== MEMTESTER START:*" } | Select-Object -Last 1
         
-        $SampleSize = "256M"
+        $SampleSize = ""
         if ($SampleLine) {
             $SampleSize = ($SampleLine -replace "SAMPLE_SIZE:", "").Trim()
+        }
+        if (-not $SampleSize) {
+            # Hitung dinamis 20% dari Free RAM saat ini jika log belum mencatat SAMPLE_SIZE
+            $FreeKB = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).FreePhysicalMemory
+            if ($FreeKB) {
+                $CalcMB = [Math]::Max(128, [Math]::Floor(($FreeKB / 1024) * 0.20))
+                $SampleSize = "${CalcMB}M"
+            } else {
+                $SampleSize = "256M"
+            }
         }
         
         $FormattedTime = "Unknown Date"
