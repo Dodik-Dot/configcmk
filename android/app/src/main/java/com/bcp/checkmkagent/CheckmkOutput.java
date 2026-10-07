@@ -13,7 +13,6 @@ public final class CheckmkOutput {
     public static final String VERSION = "1.3.5";
     private static final String PREFS_CACHE = "cmkagent_metrics_cache";
 
-    // Konfigurasi Interval Cache
     private static final long INTERVAL_RAM_SEC = 1800L;         // RAM: 30 Menit
     private static final long INTERVAL_STORAGE_SEC = 86400L;    // Storage: 1 Hari
     private static final long INTERVAL_TEMP_SEC = 1800L;        // Suhu Baterai: 30 Menit
@@ -36,7 +35,6 @@ public final class CheckmkOutput {
         String generate();
     }
 
-    // Cache reguler: Tarikan pertama kali langsung menghasilkan data instan tanpa delay
     private static CachedEntry getOrUpdateCache(Context context, String key, long intervalSec, LineGenerator generator) {
         SharedPreferences p = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE);
         long nowSec = System.currentTimeMillis() / 1000L;
@@ -54,7 +52,6 @@ public final class CheckmkOutput {
         return new CachedEntry(cachedLine, lastSec);
     }
 
-    // Cache HW/SW Inventory: Terbit instan pada tarikan pertama, lalu update setiap hari MINGGU
     private static CachedEntry getOrUpdateSundayInventoryCache(Context context, String key, LineGenerator generator) {
         SharedPreferences p = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE);
         long nowSec = System.currentTimeMillis() / 1000L;
@@ -97,7 +94,6 @@ public final class CheckmkOutput {
     }
 
     public static String build(Context context) {
-        // Metrik Real-time
         DeviceMetrics.BatteryInfo battery = DeviceMetrics.readBattery(context);
         DeviceMetrics.WifiStatus wifi = DeviceMetrics.readWifi(context);
         DeviceMetrics.DeviceInfo device = DeviceMetrics.readDeviceInfo();
@@ -109,21 +105,17 @@ public final class CheckmkOutput {
         sb.append("AgentOS: android\n");
         sb.append("Hostname: ").append(AgentConfig.getHostname(context)).append("\n\n");
 
-        // ====================================================================
-        // 1. REAL-TIME SECTION: BATERAI, STATUS AGENT, WI-FI
-        // ====================================================================
+        // 1. REAL-TIME: BATERAI, STATUS AGENT, WI-FI
         sb.append("<<<local:sep(0)>>>\n");
         sb.append(buildAgentStatusLine(context, stats)).append('\n');
-        sb.append(buildBatteryLevelLine(battery)).append('\n');      // Real-time
-        sb.append(buildBatteryHealthLine(battery)).append('\n');     // Real-time
-        sb.append(buildBatteryVoltageLine(battery)).append('\n');    // Real-time
-        sb.append(buildBatteryCurrentLine(battery)).append('\n');    // Real-time
-        sb.append(buildWifiLine(wifi)).append('\n');                 // Real-time
+        sb.append(buildBatteryLevelLine(battery)).append('\n');
+        sb.append(buildBatteryHealthLine(battery)).append('\n');
+        sb.append(buildBatteryVoltageLine(battery)).append('\n');
+        sb.append(buildBatteryCurrentLine(battery)).append('\n');
+        sb.append(buildWifiLine(wifi)).append('\n');
         sb.append(buildAndroidInfoLine(device)).append('\n');
 
-        // ====================================================================
-        // 2. CACHED SECTION: RAM (30 MENIT), STORAGE (1 HARI)
-        // ====================================================================
+        // 2. CACHED SYSTEM: RAM (30 Menit), STORAGE (1 Hari)
         CachedEntry ramEntry = getOrUpdateCache(context, "ram", INTERVAL_RAM_SEC,
                 () -> buildRamLine(DeviceMetrics.readRam(context)));
         sb.append("<<<local:cached(").append(ramEntry.epochSec).append(",")
@@ -148,30 +140,12 @@ public final class CheckmkOutput {
                 .append(INTERVAL_TRANSPORT_SEC).append("):sep(0)>>>\n");
         sb.append(transportEntry.line).append('\n');
 
-        // ====================================================================
-        // 3. HW/SW INVENTORY: MINGGUAN (SETIAP HARI MINGGU)
-        // ====================================================================
-        CachedEntry appLocalEntry = getOrUpdateSundayInventoryCache(context, "app_summary_local",
-                () -> buildAppsLocalLine(context));
-        sb.append("<<<local:cached(").append(appLocalEntry.epochSec).append(",")
-                .append(INTERVAL_WEEKLY_SEC).append("):sep(0)>>>\n");
-        sb.append(appLocalEntry.line).append('\n');
-
+        // 3. HW/SW INVENTORY (MINGGUAN - KHUSUS PENGISI INVENTORY TREE)
         CachedEntry inventoryEntry = getOrUpdateSundayInventoryCache(context, "hw_sw_inventory",
                 () -> DeviceMetrics.readAppInventory(context).fullInventoryPayload);
         sb.append(inventoryEntry.line).append('\n');
 
         return sb.toString();
-    }
-
-    private static String buildAppsLocalLine(Context context) {
-        DeviceMetrics.AppInventoryInfo inv = DeviceMetrics.readAppInventory(context);
-        return "0 \"Installed_Apps\" total_apps=" + inv.totalApps + "|user_apps=" + inv.userApps
-                + " Status : OK"
-                + " | Total Apps : " + inv.totalApps
-                + " | User Apps : " + inv.userApps
-                + " | System Apps : " + inv.systemApps
-                + " | Schedule : Weekly (Sundays)";
     }
 
     private static String buildAgentStatusLine(Context context, AgentStats.Snapshot s) {
