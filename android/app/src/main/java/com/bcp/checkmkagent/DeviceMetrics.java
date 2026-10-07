@@ -106,26 +106,23 @@ public final class DeviceMetrics {
           .append(dev.kernelVersion).append(" #1 SMP PREEMPT ")
           .append(dev.arch).append(" Android\n\n");
 
-        // 2. Software Operating System (<<<lnx_distro:sep(58)>>>)
-        sb.append("<<<lnx_distro:sep(58)>>>\n");
-        sb.append("NAME:Android ").append(dev.androidVersion).append("\n");
-        sb.append("VERSION:").append(dev.androidVersion).append(" (API ").append(dev.sdk).append(")\n");
-        sb.append("ID:android\n");
-        sb.append("VENDOR:").append(dev.manufacturer).append("\n");
-        sb.append("MODEL:").append(dev.model).append("\n\n");
+        // 2. Software Operating System (<<<lnx_distro:sep(124)>>>)
+        sb.append("<<<lnx_distro:sep(124)>>>\n");
+        sb.append("[[[/etc/os-release]]]\n");
+        sb.append("NAME=\"Android\"|VERSION=\"").append(dev.androidVersion)
+          .append(" (SDK ").append(dev.sdk).append(")\"|ID=android|ID_LIKE=linux|PRETTY_NAME=\"Android ")
+          .append(dev.androidVersion).append(" (").append(dev.manufacturer).append(" ")
+          .append(dev.model).append(")\"\n\n");
 
-        // 3. Hardware Processor (<<<inv_lnx_cpuinfo:sep(58)>>>)
-        sb.append("<<<inv_lnx_cpuinfo:sep(58)>>>\n");
+        // 3. Hardware Processor (<<<lnx_cpuinfo:sep(58)>>>)
+        sb.append("<<<lnx_cpuinfo:sep(58)>>>\n");
         sb.append("processor: 0\n");
         sb.append("model name: ").append(dev.hardwareSoc).append(" (").append(dev.board).append(")\n");
         sb.append("cpu cores: ").append(Runtime.getRuntime().availableProcessors()).append("\n\n");
 
-        // 4. Software Packages (<<<lnx_packages:sep(9)>>> & <<<inv_packages:sep(124)>>>)
-        StringBuilder sbLnx = new StringBuilder();
-        sbLnx.append("<<<lnx_packages:sep(9)>>>\n");
-
-        StringBuilder sbInv = new StringBuilder();
-        sbInv.append("<<<inv_packages:sep(124)>>>\n");
+        // 4. Software Packages 7 Kolom Standar Checkmk (<<<lnx_packages:sep(124)>>>)
+        // Format: Package|Version|Architecture|Type|Release|Summary|Status
+        sb.append("<<<lnx_packages:sep(124)>>>\n");
 
         try {
             PackageManager pm = context.getPackageManager();
@@ -142,7 +139,7 @@ public final class DeviceMetrics {
                     try {
                         CharSequence label = pkg.applicationInfo.loadLabel(pm);
                         if (label != null && label.length() > 0) {
-                            appLabel = label.toString().replace('\t', ' ').replace('|', ' ')
+                            appLabel = label.toString().replace('|', ' ')
                                     .replace('\n', ' ').replace('\r', ' ').trim();
                         }
                     } catch (Throwable ignored) {}
@@ -152,26 +149,22 @@ public final class DeviceMetrics {
                 if (isSystem) info.systemApps++;
                 else info.userApps++;
 
-                String ver = pkg.versionName != null ? pkg.versionName.trim() : "unknown";
-                ver = ver.replace('\t', ' ').replace('|', ' ');
-                String pkgType = isSystem ? "system-apk" : "user-apk";
+                String ver = pkg.versionName != null ? pkg.versionName.trim().replace('|', ' ') : "1.0";
+                String pkgType = isSystem ? "system" : "apk";
+                long verCode = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                        ? pkg.getLongVersionCode() : pkg.versionCode;
 
-                sbLnx.append(pkg.packageName).append('\t')
-                     .append(ver).append('\t')
-                     .append(dev.arch).append('\t')
-                     .append(pkgType).append('\t')
-                     .append(appLabel).append('\n');
-
-                sbInv.append(pkg.packageName).append('|')
-                     .append(ver).append('|')
-                     .append("0").append('|')
-                     .append(appLabel).append('|')
-                     .append(pkgType).append('\n');
+                // 7 Kolom: Package|Version|Arch|Type|Release/Code|Summary|Status
+                sb.append(pkg.packageName).append('|')
+                  .append(ver).append('|')
+                  .append(dev.arch).append('|')
+                  .append(pkgType).append('|')
+                  .append(verCode).append('|')
+                  .append(appLabel).append('|')
+                  .append("installed\n");
             }
         } catch (Throwable ignored) {}
 
-        sb.append(sbLnx.toString()).append('\n');
-        sb.append(sbInv.toString());
         info.fullInventoryPayload = sb.toString();
         return info;
     }
@@ -272,7 +265,6 @@ public final class DeviceMetrics {
             }
         } catch (Throwable ignored) {}
 
-        // Coba baca siklus dari sysfs kernel (MediaTek / Qualcomm node)
         if (out.cycleCount < 0) {
             String[] cyclePaths = {
                     "/sys/class/power_supply/battery/cycle_count",
@@ -292,7 +284,6 @@ public final class DeviceMetrics {
             }
         }
 
-        // 1. Tentukan Design Spec: Tetap laporkan 4800 mAh dari data Android
         try {
             double manual = AgentConfig.getDesignCapacityMah(context);
             if (isPositive(manual)) {
@@ -313,26 +304,21 @@ public final class DeviceMetrics {
             out.designCapacitySource = "Factory Spec";
         }
 
-        // 2. Kapasitas acuan full charger: 2946 mAh untuk kalkulasi MT93
         final double CALCULATION_FULL_SCALE = isMt93 ? 2946.0 : out.designCapacityMah;
 
-        // Muatan saat ini dihitung proporsional dari kapasitas maksimal charger 2946 mAh
         if (!isPositive(out.chargeCounterMah) && out.level >= 0) {
             out.chargeCounterMah = Math.round(CALCULATION_FULL_SCALE * (out.level / 100.0));
         }
 
-        // Update tracking sesi charge untuk kalkulasi siklus otomatis
         BatteryHistory.updateChargeSession(context, out.level, out.status, out.chargeCounterMah, out.voltageV);
         out.estimateSamples = BatteryHistory.getSampleCount(context);
 
-        // Fallback Cycles: Dihitung dari akumulasi mAh masuk dibagi 2946 mAh
         if (out.cycleCount < 0) {
             out.cycleCount = BatteryHistory.getEstimatedCycles(context, CALCULATION_FULL_SCALE);
         }
 
-        // 3. Evaluasi Kesehatan Berdasarkan Kapasitas Full Charger (2946 mAh)
         if (isMt93) {
-            out.fullCapacityMah = CALCULATION_FULL_SCALE; // 2946 mAh
+            out.fullCapacityMah = CALCULATION_FULL_SCALE;
             if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
                 out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.34;
                 out.healthPercent = 100.0;
