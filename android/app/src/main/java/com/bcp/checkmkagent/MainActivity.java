@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private Section batterySection;
     private Section systemSection;
     private Section networkSection;
+    private Section appsSection;
     private Section deviceSection;
     private Section settingsSection;
     private Section diagnosticsSection;
@@ -71,6 +72,7 @@ public class MainActivity extends Activity {
     private TextView batteryText;
     private TextView systemText;
     private TextView networkText;
+    private TextView appsText;
     private TextView deviceText;
     private TextView diagnosticsText;
     private ProgressBar batteryProgress;
@@ -167,6 +169,18 @@ public class MainActivity extends Activity {
         networkSection.content.addView(netActions, matchWrapMargin(0, 12, 0, 0));
         root.addView(networkSection.card, matchWrapMargin(0, 0, 0, 12));
 
+        // Card APPLICATIONS INVENTORY
+        appsSection = section("APPLICATIONS INVENTORY", "Installed APK packages & Checkmk HW/SW", false);
+        appsText = bodyText();
+        appsSection.content.addView(appsText, wrap());
+        Button rescanApps = actionButton("SCAN PACKAGES NOW", C_CARD_ALT, C_TEXT);
+        rescanApps.setOnClickListener(v -> {
+            updateDashboard();
+            Toast.makeText(this, "Inventaris aplikasi diperbarui", Toast.LENGTH_SHORT).show();
+        });
+        appsSection.content.addView(rescanApps, matchWrapMargin(0, 10, 0, 0));
+        root.addView(appsSection.card, matchWrapMargin(0, 0, 0, 12));
+
         deviceSection = section("DEVICE", "Hardware & Android profile", false);
         deviceText = bodyText();
         deviceSection.content.addView(deviceText, wrap());
@@ -178,8 +192,8 @@ public class MainActivity extends Activity {
         portInput = input(settingsSection.content, "TCP Port", InputType.TYPE_CLASS_NUMBER, "6556");
         designCapacityInput = input(settingsSection.content,
                 "Design Capacity (mAh, 0 = auto)",
-                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL,
-                "0 = Otomatis (MT93 BTY95L = 5000 mAh)");
+                InputType.TYPE_CLASS_NUMBER | InputType.NUMBER_FLAG_DECIMAL,
+                "0 = Otomatis (MT93 BTY95L = 4800 mAh)");
         allowedServerInput = input(settingsSection.content,
                 "Allowed Checkmk Server IP",
                 InputType.TYPE_CLASS_TEXT,
@@ -430,6 +444,7 @@ public class MainActivity extends Activity {
         DeviceMetrics.UsageInfo storage = DeviceMetrics.readStorage();
         DeviceMetrics.WifiStatus wifi = DeviceMetrics.readWifi(this);
         DeviceMetrics.DeviceInfo device = DeviceMetrics.readDeviceInfo();
+        DeviceMetrics.AppInventoryInfo apps = DeviceMetrics.readAppInventory(this);
         AgentStats.Snapshot stats = AgentStats.read(this);
 
         String localIp = DeviceMetrics.getLocalIpv4();
@@ -497,9 +512,10 @@ public class MainActivity extends Activity {
                 + "  •  " + b.status + "  •  Health " + health);
         batteryText.setText(
                 "Estimated health : " + health + "\n"
-                        + "Design capacity : " + design + "\n"
+                        + "Cycles           : " + (b.cycleCount >= 0 ? b.cycleCount : 0) + "\n"
+                        + "Design capacity : " + design + " (Reported Android Spec)\n"
                         + "Design source   : " + b.designCapacitySource + "\n"
-                        + (b.fullCapacityEstimated ? "Estimated full   : " : "Full capacity    : ") + full + "\n"
+                        + "Full capacity   : " + full + " (Full Charger Scale)\n"
                         + "Capacity source : " + b.fullCapacitySource + "\n"
                         + "Temperature     : " + temp + "\n"
                         + "Voltage         : " + voltage + "\n"
@@ -509,12 +525,10 @@ public class MainActivity extends Activity {
         systemSection.summary.setText("RAM " + Math.round(ram.usedPercent) + "%  •  Storage "
                 + Math.round(storage.usedPercent) + "%");
         systemText.setText(
-                "RAM      : " + Math.round(ram.usedPercent) + "% used  •  "
-                        + DeviceMetrics.fmt2(ram.freeGb) + " GB free / "
-                        + DeviceMetrics.fmt2(ram.totalGb) + " GB\n"
-                        + "Storage  : " + Math.round(storage.usedPercent) + "% used  •  "
-                        + DeviceMetrics.fmt2(storage.freeGb) + " GB free / "
-                        + DeviceMetrics.fmt2(storage.totalGb) + " GB"
+                "RAM      : " + Math.round(ram.usedPercent) + "% used (Cache 30m)\n"
+                        + "Storage  : " + Math.round(storage.usedPercent) + "% used (Cache 1d)\n"
+                        + "Free RAM : " + DeviceMetrics.fmt2(ram.freeGb) + " GB / " + DeviceMetrics.fmt2(ram.totalGb) + " GB\n"
+                        + "Free ROM : " + DeviceMetrics.fmt2(storage.freeGb) + " GB / " + DeviceMetrics.fmt2(storage.totalGb) + " GB"
         );
 
         String rssi = wifi.rssi == Integer.MIN_VALUE ? "N/A" : wifi.rssi + " dBm";
@@ -542,12 +556,26 @@ public class MainActivity extends Activity {
                         + "Battery Opt    : " + (ignoringBatteryOpt ? "Unrestricted (Safe)" : "Optimized (Risk of sleep)")
         );
 
+        // Update Card APPLICATIONS INVENTORY
+        appsSection.summary.setText(apps.totalApps + " Apps  •  " + apps.userApps + " User  •  HW/SW Ready");
+        appsText.setText(
+                "Total Packages : " + apps.totalApps + "\n"
+                        + "User Installed : " + apps.userApps + "\n"
+                        + "System Apps    : " + apps.systemApps + "\n"
+                        + "Checkmk Format : lnx_packages / inv_packages\n"
+                        + "Payload Status : Ready for HW/SW Inventory pull\n"
+                        + "Schedule       : Weekly on Sundays (Instant on 1st pull)"
+        );
+
         deviceSection.summary.setText(device.manufacturer + " " + device.model
                 + "  •  Android " + device.androidVersion);
         deviceText.setText(
                 "Manufacturer : " + device.manufacturer + "\n"
                         + "Model        : " + device.model + "\n"
                         + "Profile      : " + device.profile + "\n"
+                        + "Hardware     : " + device.hardwareSoc + " (" + device.board + ")\n"
+                        + "Architecture : " + device.arch + "\n"
+                        + "Kernel       : " + device.kernelVersion + "\n"
                         + "Android      : " + device.androidVersion + " (SDK " + device.sdk + ")\n"
                         + "Device uptime: " + CheckmkOutput.formatDuration(device.uptimeMs)
         );
