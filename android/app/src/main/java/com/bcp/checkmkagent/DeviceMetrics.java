@@ -4,6 +4,9 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
@@ -25,6 +28,7 @@ import java.lang.reflect.Method;
 import java.net.Inet4Address;
 import java.net.NetworkInterface;
 import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 
 public final class DeviceMetrics {
@@ -76,6 +80,100 @@ public final class DeviceMetrics {
         public int sdk;
         public long uptimeMs;
         public String profile;
+        public String hardwareSoc;
+        public String board;
+        public String kernelVersion;
+        public String arch;
+    }
+
+    public static final class AppInventoryInfo {
+        public int totalApps = 0;
+        public int userApps = 0;
+        public int systemApps = 0;
+        public String fullInventoryPayload = "";
+    }
+
+    public static AppInventoryInfo readAppInventory(Context context) {
+        AppInventoryInfo info = new AppInventoryInfo();
+        if (context == null) return info;
+
+        StringBuilder sb = new StringBuilder();
+        DeviceInfo dev = readDeviceInfo();
+
+        // 1. Hardware System (<<<lnx_uname>>>)
+        sb.append("<<<lnx_uname>>>\n");
+        sb.append("Linux ").append(AgentConfig.getHostname(context)).append(" ")
+          .append(dev.kernelVersion).append(" #1 SMP PREEMPT ")
+          .append(dev.arch).append(" Android\n\n");
+
+        // 2. Software Operating System (<<<lnx_distro:sep(58)>>>)
+        sb.append("<<<lnx_distro:sep(58)>>>\n");
+        sb.append("NAME:Android ").append(dev.androidVersion).append("\n");
+        sb.append("VERSION:").append(dev.androidVersion).append(" (API ").append(dev.sdk).append(")\n");
+        sb.append("ID:android\n");
+        sb.append("VENDOR:").append(dev.manufacturer).append("\n");
+        sb.append("MODEL:").append(dev.model).append("\n\n");
+
+        // 3. Hardware Processor (<<<inv_lnx_cpuinfo:sep(58)>>>)
+        sb.append("<<<inv_lnx_cpuinfo:sep(58)>>>\n");
+        sb.append("processor: 0\n");
+        sb.append("model name: ").append(dev.hardwareSoc).append(" (").append(dev.board).append(")\n");
+        sb.append("cpu cores: ").append(Runtime.getRuntime().availableProcessors()).append("\n\n");
+
+        // 4. Software Packages (<<<lnx_packages:sep(9)>>> & <<<inv_packages:sep(124)>>>)
+        StringBuilder sbLnx = new StringBuilder();
+        sbLnx.append("<<<lnx_packages:sep(9)>>>\n");
+
+        StringBuilder sbInv = new StringBuilder();
+        sbInv.append("<<<inv_packages:sep(124)>>>\n");
+
+        try {
+            PackageManager pm = context.getPackageManager();
+            List<PackageInfo> packages = pm.getInstalledPackages(0);
+
+            for (PackageInfo pkg : packages) {
+                if (pkg == null || pkg.packageName == null) continue;
+
+                boolean isSystem = false;
+                String appLabel = pkg.packageName;
+
+                if (pkg.applicationInfo != null) {
+                    isSystem = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+                    try {
+                        CharSequence label = pkg.applicationInfo.loadLabel(pm);
+                        if (label != null && label.length() > 0) {
+                            appLabel = label.toString().replace('\t', ' ').replace('|', ' ')
+                                    .replace('\n', ' ').replace('\r', ' ').trim();
+                        }
+                    } catch (Throwable ignored) {}
+                }
+
+                info.totalApps++;
+                if (isSystem) info.systemApps++;
+                else info.userApps++;
+
+                String ver = pkg.versionName != null ? pkg.versionName.trim() : "unknown";
+                ver = ver.replace('\t', ' ').replace('|', ' ');
+                String pkgType = isSystem ? "system-apk" : "user-apk";
+
+                sbLnx.append(pkg.packageName).append('\t')
+                     .append(ver).append('\t')
+                     .append(dev.arch).append('\t')
+                     .append(pkgType).append('\t')
+                     .append(appLabel).append('\n');
+
+                sbInv.append(pkg.packageName).append('|')
+                     .append(ver).append('|')
+                     .append("0").append('|')
+                     .append(appLabel).append('|')
+                     .append(pkgType).append('\n');
+            }
+        } catch (Throwable ignored) {}
+
+        sb.append(sbLnx.toString()).append('\n');
+        sb.append(sbInv.toString());
+        info.fullInventoryPayload = sb.toString();
+        return info;
     }
 
     public static BatteryInfo readBattery(Context context) {
@@ -174,12 +272,14 @@ public final class DeviceMetrics {
             }
         } catch (Throwable ignored) {}
 
+        // Coba baca siklus dari sysfs kernel (MediaTek / Qualcomm node)
         if (out.cycleCount < 0) {
             String[] cyclePaths = {
                     "/sys/class/power_supply/battery/cycle_count",
                     "/sys/class/power_supply/bms/cycle_count",
                     "/sys/class/power_supply/battery/battery_cycle",
-                    "/sys/devices/platform/charger/power_supply/battery/cycle_count"
+                    "/sys/devices/platform/charger/power_supply/battery/cycle_count",
+                    "/sys/devices/platform/mtk-battery/power_supply/battery/cycle_count"
             };
             for (String path : cyclePaths) {
                 try {
@@ -192,7 +292,7 @@ public final class DeviceMetrics {
             }
         }
 
-        // 1. Tentukan Design Capacity secara dinamis dari sistem Android
+        // 1. Tentukan Design Spec: Tetap laporkan 4800 mAh dari data Android
         try {
             double manual = AgentConfig.getDesignCapacityMah(context);
             if (isPositive(manual)) {
@@ -213,41 +313,39 @@ public final class DeviceMetrics {
             out.designCapacitySource = "Factory Spec";
         }
 
-        // 2. Evaluasi Muatan Saat Ini (Current Charge)
+        // 2. Kapasitas acuan full charger: 2946 mAh untuk kalkulasi MT93
+        final double CALCULATION_FULL_SCALE = isMt93 ? 2946.0 : out.designCapacityMah;
+
+        // Muatan saat ini dihitung proporsional dari kapasitas maksimal charger 2946 mAh
         if (!isPositive(out.chargeCounterMah) && out.level >= 0) {
-            double referenceFull = isMt93 ? 2946.0 : out.designCapacityMah;
-            out.chargeCounterMah = Math.round(referenceFull * (out.level / 100.0));
+            out.chargeCounterMah = Math.round(CALCULATION_FULL_SCALE * (out.level / 100.0));
         }
 
-        // Simpan sesi pengisian untuk tracking riwayat
+        // Update tracking sesi charge untuk kalkulasi siklus otomatis
         BatteryHistory.updateChargeSession(context, out.level, out.status, out.chargeCounterMah, out.voltageV);
         out.estimateSamples = BatteryHistory.getSampleCount(context);
 
-        // 3. Logika Evaluasi Kesehatan: Terpisah Khusus Newland MT93 vs Perangkat Normal
-        if (isMt93) {
-            // =========================================================================
-            // KHUSUS NEWLAND MT93 (Mengatasi skala virtual firmware 2946 mAh)
-            // =========================================================================
-            final double MT93_FULL_SCALE = 2946.0;
+        // Fallback Cycles: Dihitung dari akumulasi mAh masuk dibagi 2946 mAh
+        if (out.cycleCount < 0) {
+            out.cycleCount = BatteryHistory.getEstimatedCycles(context, CALCULATION_FULL_SCALE);
+        }
 
+        // 3. Evaluasi Kesehatan Berdasarkan Kapasitas Full Charger (2946 mAh)
+        if (isMt93) {
+            out.fullCapacityMah = CALCULATION_FULL_SCALE; // 2946 mAh
             if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
-                out.fullCapacityMah = MT93_FULL_SCALE;
                 out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.34;
                 out.healthPercent = 100.0;
                 out.fullCapacitySource = "100% Full Cut-off (2946 mAh)";
             } else if (out.level >= 15 && isPositive(out.chargeCounterMah)) {
-                out.fullCapacityMah = out.chargeCounterMah / (out.level / 100.0);
-                out.healthPercent = Math.min(100.0, (out.fullCapacityMah / MT93_FULL_SCALE) * 100.0);
+                double estimatedDynamic = out.chargeCounterMah / (out.level / 100.0);
+                out.healthPercent = Math.min(100.0, (estimatedDynamic / CALCULATION_FULL_SCALE) * 100.0);
                 out.fullCapacitySource = "Hardware Normal (" + out.level + "% State)";
             } else {
-                out.fullCapacityMah = MT93_FULL_SCALE;
                 out.healthPercent = 100.0;
                 out.fullCapacitySource = "System Baseline";
             }
         } else {
-            // =========================================================================
-            // PERANGKAT NORMAL (Smartphone Xiaomi, Samsung, dsb.)
-            // =========================================================================
             if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
                 out.fullCapacityMah = (isPositive(out.chargeCounterMah) && out.chargeCounterMah > 2000.0)
                         ? out.chargeCounterMah : out.designCapacityMah;
@@ -468,6 +566,10 @@ public final class DeviceMetrics {
         out.sdk = Build.VERSION.SDK_INT;
         out.uptimeMs = SystemClock.elapsedRealtime();
         out.profile = out.manufacturer + " " + out.model;
+        out.hardwareSoc = safe(Build.HARDWARE);
+        out.board = safe(Build.BOARD);
+        out.arch = safe(System.getProperty("os.arch"));
+        out.kernelVersion = safe(System.getProperty("os.version"));
         return out;
     }
 
