@@ -99,31 +99,83 @@ public final class DeviceMetrics {
 
         StringBuilder sb = new StringBuilder();
         DeviceInfo dev = readDeviceInfo();
+        UsageInfo ram = readRam(context);
+        UsageInfo storage = readStorage();
 
-        // 1. Hardware System (<<<lnx_uname>>>)
+        // =====================================================================
+        // 1. HARDWARE: SYSTEM & MEMORY (RAM) -> Mengisi Hardware > Memory & System
+        // =====================================================================
+        long ramTotalMb = Math.round(ram.totalGb * 1024.0);
+        sb.append("<<<dmidecode:sep(58)>>>\n");
+        sb.append("System Information\n");
+        sb.append(":Manufacturer: ").append(dev.manufacturer).append("\n");
+        sb.append(":Product Name: ").append(dev.model).append("\n");
+        sb.append(":Version: Android ").append(dev.androidVersion).append("\n");
+        sb.append(":Serial Number: ").append(dev.board).append("\n");
+        sb.append(":UUID: ").append(dev.profile.hashCode()).append("\n\n");
+
+        sb.append("Physical Memory Array\n");
+        sb.append(":Location: System Board\n");
+        sb.append(":Use: System Memory\n");
+        sb.append(":Maximum Capacity: ").append(ramTotalMb).append(" MB\n");
+        sb.append(":Number Of Devices: 1\n\n");
+
+        sb.append("Memory Device\n");
+        sb.append(":Array Handle: 0x0001\n");
+        sb.append(":Total Width: 64 bits\n");
+        sb.append(":Data Width: 64 bits\n");
+        sb.append(":Size: ").append(ramTotalMb).append(" MB\n");
+        sb.append(":Form Factor: Row Of Chips\n");
+        sb.append(":Locator: RAM 0\n");
+        sb.append(":Bank Locator: Bank 0\n");
+        sb.append(":Type: LPDDR4\n");
+        sb.append(":Type Detail: Synchronous\n");
+        sb.append(":Speed: 1866 MT/s\n");
+        sb.append(":Manufacturer: ").append(dev.manufacturer).append("\n\n");
+
+        // =====================================================================
+        // 2. HARDWARE: PROCESSOR -> Mengisi Hardware > Processor
+        // =====================================================================
+        int cores = Math.max(1, Runtime.getRuntime().availableProcessors());
+        sb.append("<<<lnx_cpuinfo:sep(58)>>>\n");
+        for (int i = 0; i < cores; i++) {
+            sb.append("processor: ").append(i).append("\n");
+            sb.append("model name: ").append(dev.hardwareSoc).append(" (").append(dev.board).append(")\n");
+            sb.append("cpu MHz: 2000.000\n");
+            sb.append("cache size: 1024 KB\n");
+            sb.append("flags: fp asimd evtstrm aes pmull sha1 sha2 crc32\n\n");
+        }
+
+        // =====================================================================
+        // 3. HARDWARE: STORAGE -> Mengisi Hardware > Storage > Block devices
+        // =====================================================================
+        long storageSectors512 = Math.round(storage.totalGb * 1024.0 * 1024.0 * 2.0);
+        sb.append("<<<lnx_block_devices:sep(0)>>>\n");
+        sb.append("|device|/sys/block/internal_storage|\n");
+        sb.append("|size|").append(storageSectors512).append("|\n");
+        sb.append("|device/vendor|Internal|\n");
+        sb.append("|device/model|eMMC/UFS Internal Storage (").append(Math.round(storage.totalGb)).append(" GB)|\n");
+        sb.append("|device/type|MMC|\n\n");
+
+        // =====================================================================
+        // 4. SOFTWARE: OPERATING SYSTEM -> Mengisi Software > Operating system
+        // =====================================================================
+        sb.append("<<<lnx_distro:sep(124)>>>\n");
+        sb.append("[[[/etc/os-release]]]\n");
+        sb.append("NAME=\"Android\"|VERSION=\"").append(dev.androidVersion)
+          .append(" (SDK ").append(dev.sdk).append(")\"|ID=android|PRETTY_NAME=\"Android ")
+          .append(dev.androidVersion).append(" (").append(dev.manufacturer).append(" ")
+          .append(dev.model).append(")\"\n\n");
+
         sb.append("<<<lnx_uname>>>\n");
         sb.append("Linux ").append(AgentConfig.getHostname(context)).append(" ")
           .append(dev.kernelVersion).append(" #1 SMP PREEMPT ")
           .append(dev.arch).append(" Android\n\n");
 
-        // 2. Software Operating System (<<<lnx_distro:sep(124)>>>)
-        sb.append("<<<lnx_distro:sep(124)>>>\n");
-        sb.append("[[[/etc/os-release]]]\n");
-        sb.append("NAME=\"Android\"|VERSION=\"").append(dev.androidVersion)
-          .append(" (SDK ").append(dev.sdk).append(")\"|ID=android|ID_LIKE=linux|PRETTY_NAME=\"Android ")
-          .append(dev.androidVersion).append(" (").append(dev.manufacturer).append(" ")
-          .append(dev.model).append(")\"\n\n");
-
-        // 3. Hardware Processor (<<<lnx_cpuinfo:sep(58)>>>)
-        sb.append("<<<lnx_cpuinfo:sep(58)>>>\n");
-        sb.append("processor: 0\n");
-        sb.append("model name: ").append(dev.hardwareSoc).append(" (").append(dev.board).append(")\n");
-        sb.append("cpu cores: ").append(Runtime.getRuntime().availableProcessors()).append("\n\n");
-
-        // 4. Software Packages 7 Kolom Standar Checkmk (<<<lnx_packages:sep(124)>>>)
-        // Format: Package|Version|Architecture|Type|Release|Summary|Status
+        // =====================================================================
+        // 5. SOFTWARE: PACKAGES -> Mengisi Software > Software packages (7 Kolom)
+        // =====================================================================
         sb.append("<<<lnx_packages:sep(124)>>>\n");
-
         try {
             PackageManager pm = context.getPackageManager();
             List<PackageInfo> packages = pm.getInstalledPackages(0);
@@ -154,7 +206,7 @@ public final class DeviceMetrics {
                 long verCode = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
                         ? pkg.getLongVersionCode() : pkg.versionCode;
 
-                // 7 Kolom: Package|Version|Arch|Type|Release/Code|Summary|Status
+                // Format 7 Kolom Checkmk: Package|Version|Arch|Type|Release|Summary|Status
                 sb.append(pkg.packageName).append('|')
                   .append(ver).append('|')
                   .append(dev.arch).append('|')
@@ -265,6 +317,7 @@ public final class DeviceMetrics {
             }
         } catch (Throwable ignored) {}
 
+        // 1. Cek Node Sysfs Kernel (MediaTek MTK node)
         if (out.cycleCount < 0) {
             String[] cyclePaths = {
                     "/sys/class/power_supply/battery/cycle_count",
@@ -284,6 +337,7 @@ public final class DeviceMetrics {
             }
         }
 
+        // 2. Design Spec: Tetap laporkan 4800 mAh dari data Android
         try {
             double manual = AgentConfig.getDesignCapacityMah(context);
             if (isPositive(manual)) {
@@ -304,21 +358,25 @@ public final class DeviceMetrics {
             out.designCapacitySource = "Factory Spec";
         }
 
+        // 3. Kapasitas acuan full charger: 2946 mAh untuk kalkulasi MT93
         final double CALCULATION_FULL_SCALE = isMt93 ? 2946.0 : out.designCapacityMah;
 
         if (!isPositive(out.chargeCounterMah) && out.level >= 0) {
             out.chargeCounterMah = Math.round(CALCULATION_FULL_SCALE * (out.level / 100.0));
         }
 
+        // Simpan sesi pengisian untuk tracking akumulator siklus
         BatteryHistory.updateChargeSession(context, out.level, out.status, out.chargeCounterMah, out.voltageV);
         out.estimateSamples = BatteryHistory.getSampleCount(context);
 
+        // Fallback Cycles untuk Android 11: Akumulasi mAh dibagi 2946 mAh
         if (out.cycleCount < 0) {
             out.cycleCount = BatteryHistory.getEstimatedCycles(context, CALCULATION_FULL_SCALE);
         }
 
+        // 4. Evaluasi Kesehatan Berdasarkan Kapasitas Full Charger (2946 mAh)
         if (isMt93) {
-            out.fullCapacityMah = CALCULATION_FULL_SCALE;
+            out.fullCapacityMah = CALCULATION_FULL_SCALE; // 2946 mAh
             if (out.level == 100 || "Full".equalsIgnoreCase(out.status)) {
                 out.fullChargeVoltageV = !Double.isNaN(out.voltageV) ? out.voltageV : 4.34;
                 out.healthPercent = 100.0;
