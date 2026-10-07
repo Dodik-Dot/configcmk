@@ -22,6 +22,9 @@ public final class BatteryHistory {
     private static final String K_SESSION_LAST_LEVEL = "active_last_level";
     private static final String K_SESSION_LAST_MAH = "active_last_mah";
 
+    // Akumulasi arus masuk untuk perhitungan siklus (Cycles) di Android 11
+    private static final String K_ACCUMULATED_CHARGED_MAH = "accumulated_charged_mah";
+
     private static final int MAX_SESSIONS = 15;
     private static final int MIN_CHARGE_DELTA_PERCENT = 20;
 
@@ -55,10 +58,21 @@ public final class BatteryHistory {
         }
 
         if (isCharging && wasCharging) {
-            prefs.edit()
-                    .putInt(K_SESSION_LAST_LEVEL, level)
-                    .putFloat(K_SESSION_LAST_MAH, (float) chargeCounterMah)
-                    .apply();
+            float prevLastMah = prefs.getFloat(K_SESSION_LAST_MAH, (float) chargeCounterMah);
+            if (chargeCounterMah > prevLastMah) {
+                double delta = chargeCounterMah - prevLastMah;
+                double total = prefs.getFloat(K_ACCUMULATED_CHARGED_MAH, 0f) + delta;
+                prefs.edit()
+                        .putFloat(K_ACCUMULATED_CHARGED_MAH, (float) total)
+                        .putInt(K_SESSION_LAST_LEVEL, level)
+                        .putFloat(K_SESSION_LAST_MAH, (float) chargeCounterMah)
+                        .apply();
+            } else {
+                prefs.edit()
+                        .putInt(K_SESSION_LAST_LEVEL, level)
+                        .putFloat(K_SESSION_LAST_MAH, (float) chargeCounterMah)
+                        .apply();
+            }
             return;
         }
 
@@ -84,6 +98,13 @@ public final class BatteryHistory {
                     .remove(K_SESSION_START_MAH)
                     .apply();
         }
+    }
+
+    public static int getEstimatedCycles(Context context, double referenceCapacityMah) {
+        if (context == null || referenceCapacityMah <= 0) return 0;
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        double totalCharged = prefs.getFloat(K_ACCUMULATED_CHARGED_MAH, 0f);
+        return (int) (totalCharged / referenceCapacityMah);
     }
 
     private static void addSessionSample(SharedPreferences prefs, double capacity) {
