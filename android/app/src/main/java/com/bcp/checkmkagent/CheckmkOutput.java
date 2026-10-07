@@ -4,19 +4,21 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.text.SimpleDateFormat;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class CheckmkOutput {
-    public static final String VERSION = "1.3.4";
+    public static final String VERSION = "1.3.5";
     private static final String PREFS_CACHE = "cmkagent_metrics_cache";
 
-    private static final long INTERVAL_TEMP_SEC = 1800L;
-    private static final long INTERVAL_CURRENT_SEC = 3600L;
-    private static final long INTERVAL_TRANSPORT_SEC = 10800L;
-    private static final long INTERVAL_VOLTAGE_SEC = 86400L;
-    private static final long INTERVAL_STORAGE_SEC = 86400L;
+    // Konfigurasi Interval Cache
+    private static final long INTERVAL_RAM_SEC = 1800L;         // RAM: 30 Menit
+    private static final long INTERVAL_STORAGE_SEC = 86400L;    // Storage: 1 Hari
+    private static final long INTERVAL_TEMP_SEC = 1800L;        // Suhu Baterai: 30 Menit
+    private static final long INTERVAL_TRANSPORT_SEC = 10800L;  // Transport Status: 3 Jam
+    private static final long INTERVAL_WEEKLY_SEC = 604800L;    // HW/SW Inventory: 7 Hari (Mingguan)
 
     private CheckmkOutput() {}
 
@@ -34,6 +36,7 @@ public final class CheckmkOutput {
         String generate();
     }
 
+    // Cache reguler: Tarikan pertama kali langsung menghasilkan data instan tanpa delay
     private static CachedEntry getOrUpdateCache(Context context, String key, long intervalSec, LineGenerator generator) {
         SharedPreferences p = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE);
         long nowSec = System.currentTimeMillis() / 1000L;
@@ -51,9 +54,51 @@ public final class CheckmkOutput {
         return new CachedEntry(cachedLine, lastSec);
     }
 
+    // Cache HW/SW Inventory: Terbit instan pada tarikan pertama, lalu update setiap hari MINGGU
+    private static CachedEntry getOrUpdateSundayInventoryCache(Context context, String key, LineGenerator generator) {
+        SharedPreferences p = context.getSharedPreferences(PREFS_CACHE, Context.MODE_PRIVATE);
+        long nowSec = System.currentTimeMillis() / 1000L;
+        long lastSec = p.getLong(key + "_ts", 0L);
+        long lastSundayScanMs = p.getLong(key + "_sunday_ms", 0L);
+        String cachedLine = p.getString(key + "_line", null);
+
+        boolean needRefresh = false;
+
+        if (cachedLine == null || cachedLine.trim().isEmpty()) {
+            needRefresh = true;
+        } else {
+            Calendar now = Calendar.getInstance();
+            boolean isSunday = (now.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY);
+
+            if (isSunday) {
+                Calendar lastScan = Calendar.getInstance();
+                lastScan.setTimeInMillis(lastSundayScanMs);
+
+                boolean alreadyScannedToday = (now.get(Calendar.YEAR) == lastScan.get(Calendar.YEAR))
+                        && (now.get(Calendar.DAY_OF_YEAR) == lastScan.get(Calendar.DAY_OF_YEAR));
+
+                if (!alreadyScannedToday) {
+                    needRefresh = true;
+                }
+            }
+        }
+
+        if (needRefresh) {
+            String newLine = generator.generate();
+            p.edit()
+                    .putString(key + "_line", newLine)
+                    .putLong(key + "_ts", nowSec)
+                    .putLong(key + "_sunday_ms", System.currentTimeMillis())
+                    .apply();
+            return new CachedEntry(newLine, nowSec);
+        }
+
+        return new CachedEntry(cachedLine, lastSec > 0 ? lastSec : nowSec);
+    }
+
     public static String build(Context context) {
+        // Metrik Real-time
         DeviceMetrics.BatteryInfo battery = DeviceMetrics.readBattery(context);
-        DeviceMetrics.UsageInfo ram = DeviceMetrics.readRam(context);
         DeviceMetrics.WifiStatus wifi = DeviceMetrics.readWifi(context);
         DeviceMetrics.DeviceInfo device = DeviceMetrics.readDeviceInfo();
         AgentStats.Snapshot stats = AgentStats.read(context);
@@ -64,37 +109,26 @@ public final class CheckmkOutput {
         sb.append("AgentOS: android\n");
         sb.append("Hostname: ").append(AgentConfig.getHostname(context)).append("\n\n");
 
+        // ====================================================================
+        // 1. REAL-TIME SECTION: BATERAI, STATUS AGENT, WI-FI
+        // ====================================================================
         sb.append("<<<local:sep(0)>>>\n");
         sb.append(buildAgentStatusLine(context, stats)).append('\n');
-        sb.append(buildBatteryLevelLine(battery)).append('\n');
-        sb.append(buildBatteryHealthLine(battery)).append('\n');
-        sb.append(buildRamLine(ram)).append('\n');
-        sb.append(buildWifiLine(wifi)).append('\n');
+        sb.append(buildBatteryLevelLine(battery)).append('\n');      // Real-time
+        sb.append(buildBatteryHealthLine(battery)).append('\n');     // Real-time
+        sb.append(buildBatteryVoltageLine(battery)).append('\n');    // Real-time
+        sb.append(buildBatteryCurrentLine(battery)).append('\n');    // Real-time
+        sb.append(buildWifiLine(wifi)).append('\n');                 // Real-time
         sb.append(buildAndroidInfoLine(device)).append('\n');
 
-        CachedEntry tempEntry = getOrUpdateCache(context, "bat_temp", INTERVAL_TEMP_SEC,
-                () -> buildBatteryTemperatureLine(battery));
-        sb.append("<<<local:cached(").append(tempEntry.epochSec).append(",")
-                .append(INTERVAL_TEMP_SEC).append("):sep(0)>>>\n");
-        sb.append(tempEntry.line).append('\n');
-
-        CachedEntry currentEntry = getOrUpdateCache(context, "bat_current", INTERVAL_CURRENT_SEC,
-                () -> buildBatteryCurrentLine(battery));
-        sb.append("<<<local:cached(").append(currentEntry.epochSec).append(",")
-                .append(INTERVAL_CURRENT_SEC).append("):sep(0)>>>\n");
-        sb.append(currentEntry.line).append('\n');
-
-        CachedEntry transportEntry = getOrUpdateCache(context, "transport", INTERVAL_TRANSPORT_SEC,
-                () -> buildTransportStatusLine(context, stats));
-        sb.append("<<<local:cached(").append(transportEntry.epochSec).append(",")
-                .append(INTERVAL_TRANSPORT_SEC).append("):sep(0)>>>\n");
-        sb.append(transportEntry.line).append('\n');
-
-        CachedEntry voltageEntry = getOrUpdateCache(context, "bat_voltage", INTERVAL_VOLTAGE_SEC,
-                () -> buildBatteryVoltageLine(battery));
-        sb.append("<<<local:cached(").append(voltageEntry.epochSec).append(",")
-                .append(INTERVAL_VOLTAGE_SEC).append("):sep(0)>>>\n");
-        sb.append(voltageEntry.line).append('\n');
+        // ====================================================================
+        // 2. CACHED SECTION: RAM (30 MENIT), STORAGE (1 HARI)
+        // ====================================================================
+        CachedEntry ramEntry = getOrUpdateCache(context, "ram", INTERVAL_RAM_SEC,
+                () -> buildRamLine(DeviceMetrics.readRam(context)));
+        sb.append("<<<local:cached(").append(ramEntry.epochSec).append(",")
+                .append(INTERVAL_RAM_SEC).append("):sep(0)>>>\n");
+        sb.append(ramEntry.line).append('\n');
 
         CachedEntry storageEntry = getOrUpdateCache(context, "storage", INTERVAL_STORAGE_SEC,
                 () -> buildStorageLine(DeviceMetrics.readStorage()));
@@ -102,7 +136,42 @@ public final class CheckmkOutput {
                 .append(INTERVAL_STORAGE_SEC).append("):sep(0)>>>\n");
         sb.append(storageEntry.line).append('\n');
 
+        CachedEntry tempEntry = getOrUpdateCache(context, "bat_temp", INTERVAL_TEMP_SEC,
+                () -> buildBatteryTemperatureLine(battery));
+        sb.append("<<<local:cached(").append(tempEntry.epochSec).append(",")
+                .append(INTERVAL_TEMP_SEC).append("):sep(0)>>>\n");
+        sb.append(tempEntry.line).append('\n');
+
+        CachedEntry transportEntry = getOrUpdateCache(context, "transport", INTERVAL_TRANSPORT_SEC,
+                () -> buildTransportStatusLine(context, stats));
+        sb.append("<<<local:cached(").append(transportEntry.epochSec).append(",")
+                .append(INTERVAL_TRANSPORT_SEC).append("):sep(0)>>>\n");
+        sb.append(transportEntry.line).append('\n');
+
+        // ====================================================================
+        // 3. HW/SW INVENTORY: MINGGUAN (SETIAP HARI MINGGU)
+        // ====================================================================
+        CachedEntry appLocalEntry = getOrUpdateSundayInventoryCache(context, "app_summary_local",
+                () -> buildAppsLocalLine(context));
+        sb.append("<<<local:cached(").append(appLocalEntry.epochSec).append(",")
+                .append(INTERVAL_WEEKLY_SEC).append("):sep(0)>>>\n");
+        sb.append(appLocalEntry.line).append('\n');
+
+        CachedEntry inventoryEntry = getOrUpdateSundayInventoryCache(context, "hw_sw_inventory",
+                () -> DeviceMetrics.readAppInventory(context).fullInventoryPayload);
+        sb.append(inventoryEntry.line).append('\n');
+
         return sb.toString();
+    }
+
+    private static String buildAppsLocalLine(Context context) {
+        DeviceMetrics.AppInventoryInfo inv = DeviceMetrics.readAppInventory(context);
+        return "0 \"Installed_Apps\" total_apps=" + inv.totalApps + "|user_apps=" + inv.userApps
+                + " Status : OK"
+                + " | Total Apps : " + inv.totalApps
+                + " | User Apps : " + inv.userApps
+                + " | System Apps : " + inv.systemApps
+                + " | Schedule : Weekly (Sundays)";
     }
 
     private static String buildAgentStatusLine(Context context, AgentStats.Snapshot s) {
@@ -187,7 +256,7 @@ public final class CheckmkOutput {
         String designStr = Double.isNaN(b.designCapacityMah) ? "N/A" : Math.round(b.designCapacityMah) + " mAh";
         String chargeStr = Double.isNaN(b.chargeCounterMah) ? "N/A" : Math.round(b.chargeCounterMah) + " mAh";
         String fullVoltStr = Double.isNaN(b.fullChargeVoltageV) ? "" : String.format(Locale.US, " | Full Voltage : %.2f V", b.fullChargeVoltageV);
-        String cycleStr = (b.cycleCount >= 0) ? (" | Cycles : " + b.cycleCount) : " | Cycles : N/A";
+        String cycleStr = (b.cycleCount >= 0) ? (" | Cycles : " + b.cycleCount) : " | Cycles : 0";
 
         String metric = "battery_health=" + String.format(Locale.US, "%.1f", b.healthPercent) + ";80;65;0;100";
         if (b.cycleCount >= 0) {
