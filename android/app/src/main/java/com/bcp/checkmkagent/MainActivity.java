@@ -169,7 +169,6 @@ public class MainActivity extends Activity {
         networkSection.content.addView(netActions, matchWrapMargin(0, 12, 0, 0));
         root.addView(networkSection.card, matchWrapMargin(0, 0, 0, 12));
 
-        // Card APPLICATIONS INVENTORY
         appsSection = section("APPLICATIONS INVENTORY", "Installed APK packages & Checkmk HW/SW", false);
         appsText = bodyText();
         appsSection.content.addView(appsText, wrap());
@@ -192,7 +191,7 @@ public class MainActivity extends Activity {
         portInput = input(settingsSection.content, "TCP Port", InputType.TYPE_CLASS_NUMBER, "6556");
         designCapacityInput = input(settingsSection.content,
                 "Design Capacity (mAh, 0 = auto)",
-                InputType.TYPE_CLASS_NUMBER | InputType.NUMBER_FLAG_DECIMAL,
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL,
                 "0 = Otomatis (MT93 BTY95L = 4800 mAh)");
         allowedServerInput = input(settingsSection.content,
                 "Allowed Checkmk Server IP",
@@ -556,7 +555,6 @@ public class MainActivity extends Activity {
                         + "Battery Opt    : " + (ignoringBatteryOpt ? "Unrestricted (Safe)" : "Optimized (Risk of sleep)")
         );
 
-        // Update Card APPLICATIONS INVENTORY
         appsSection.summary.setText(apps.totalApps + " Apps  •  " + apps.userApps + " User  •  HW/SW Ready");
         appsText.setText(
                 "Total Packages : " + apps.totalApps + "\n"
