@@ -1,3 +1,4 @@
+@'
 # =====================================================================
 # Local Check Checkmk: Smartctl Storage Health Monitor (Windows)
 # Engine: smartctl.exe JSON Parser with Multi-Vendor SATA/NVMe Fix
@@ -16,7 +17,6 @@ $Last16  = if ($Now -lt $Today16) { $Today16.AddDays(-1) } else { $Today16 }
 $NeedUpdate = $true
 if (Test-Path $CacheFile) {
     $CacheItem = Get-Item $CacheFile
-    # Update jika file cache melewati batas jam 16 atau jika file masih kosong (0 byte)
     if ($CacheItem.LastWriteTime -ge $Last16 -and $CacheItem.Length -gt 0) {
         $NeedUpdate = $false
     }
@@ -44,7 +44,6 @@ if ($NeedUpdate) {
 
         # =====================================================================
         # FALLBACK: KHUSUS SSD NVMe INTEL VMD/RAID (JIKA SMARTCTL DIBLOKIR DRIVER)
-        # Device normal yang sukses dibaca smartctl tidak akan masuk ke blok ini.
         # =====================================================================
         if (-not $drive -or -not $drive.smart_status) {$pDisk = Get-PhysicalDisk | Where-Object { $_.DeviceId -eq$i -or $_.DeviceId -eq [string]$i } -ErrorAction SilentlyContinue
             if ($pDisk) {
@@ -139,7 +138,6 @@ if ($NeedUpdate) {
             elseif ($drive.ata_smart_attributes.table) {$tipe = "SSD Sata"
                 $table =$drive.ata_smart_attributes.table
 
-                # 1. Cari Nilai Sisa Umur / Health (Mencakup ID 169 untuk V-GEN/Silicon Motion)
                 $attrHealth = $table \vert{} Where-Object {$_.id -in @(169, 231, 202, 177, 232, 233) -or 
                     $_.name -match "Wearout|Life|Remaining|Endurance|Available_Reservd"
                 } | Select-Object -First 1
@@ -155,7 +153,6 @@ if ($NeedUpdate) {
                     if ($sisa_health -le 70) {$kode = 2 } elseif ($sisa_health -le 85) {$kode = 1 }
                 }
 
-                # 2. Hitung Read & Write TBW
                 $lba = if ($drive.logical_block_size) { [double]$drive.logical_block_size } else { 512.0 }
                 $attr_read  =$table | Where-Object { $_.id -eq 242 -or$_.name -match "Total_LBAs_Read" } | Select-Object -First 1
                 $attr_write =$table | Where-Object { $_.id -eq 241 -or$_.name -match "Total_LBAs_Written" } | Select-Object -First 1
@@ -187,7 +184,6 @@ if ($NeedUpdate) {
             $str_read  = if ($total_read -ne "N/A") { "$total_read TB" } else { "N/A" }
             $str_write = if ($total_write -ne "N/A") { "$total_write TB" } else { "N/A" }
 
-            # Prediksi Umur
             $estimasi_umur = "Tidak dapat diprediksi"
             if ($jam -gt 0 -and$health_pct -ne "Tidak terbaca") {
                 if ($wear_terpakai -gt 0) {
@@ -207,10 +203,10 @@ if ($NeedUpdate) {
             $detail = "Drive: $tipe \vert{} Merk:$merk | Kesehatan: $health_pct \vert{} Suhu:$temp | Masa Pakai: $poh \vert{} Read:$str_read | Write: $str_write \vert{} Est Max TBW:$max_tbw | Prediksi: $estimasi_umur \vert{} SMART:$status"
         }
 
-        # Format Nama Service Checkmk
         $CleanMerk =$merk -replace '[^\w\s-]', ''
         "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding ascii -Append
     }
 }
 
 Get-Content $CacheFile -ErrorAction SilentlyContinue
+'@ | Set-Content -Path "C:\ProgramData\checkmk\agent\local\disk_nvme_health.ps1" -Encoding ASCII
