@@ -11,7 +11,7 @@ if (-not $isAdmin) {
 }
 
 # 2. Konfigurasi Default & Parser Argumen Manual
-$ServerIP      = ""       # Default IP Server Checkmk
+$ServerIP      = "192.168.122.205"       # Default IP Server Checkmk
 $SiteName      = "cmk"                  # Default Site ID Checkmk Anda
 $AgentVersion  = "2.5.0p14-1"           # Default Versi Agen Checkmkmk-agent_2.4.0p27
 $GithubUser    = "Dodik-Dot"            # Username GitHub Anda
