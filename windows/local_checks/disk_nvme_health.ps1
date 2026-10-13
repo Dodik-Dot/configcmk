@@ -5,10 +5,10 @@
 # =====================================================================
 $ErrorActionPreference = 'SilentlyContinue'
 $CacheDir  = "$env:ProgramData\checkmk\agent\cache"
-if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force $CacheDir | Out-Null }
+if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force -Path $CacheDir | Out-Null }
 $CacheFile = Join-Path $CacheDir "cache_disk_health.txt"
 
-# 1. Logika Penjadwalan Cache Harian Pukul 16:00 (Otomatis refresh jika cache kosong)
+# 1. Logika Penjadwalan Cache Harian Pukul 16:00 (Auto refresh jika cache kosong)
 $Now = Get-Date
 $Today16 = Get-Date -Hour 16 -Minute 0 -Second 0
 $Last16  = if ($Now -lt $Today16) { $Today16.AddDays(-1) } else { $Today16 }
@@ -43,7 +43,6 @@ if ($NeedUpdate) {
 
         # =====================================================================
         # FALLBACK: KHUSUS SSD NVMe INTEL VMD/RAID (JIKA SMARTCTL DIBLOKIR DRIVER)
-        # Device normal yang sukses dibaca smartctl tidak akan masuk ke blok ini.
         # =====================================================================
         if (-not $drive -or -not $drive.smart_status) {$pDisk = Get-PhysicalDisk | Where-Object { $_.DeviceId -eq$i -or $_.DeviceId -eq [string]$i } -ErrorAction SilentlyContinue
             if ($pDisk) {
