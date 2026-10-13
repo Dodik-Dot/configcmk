@@ -5,43 +5,47 @@
 # =====================================================================
 $ErrorActionPreference = 'SilentlyContinue'
 $CacheDir  = "$env:ProgramData\checkmk\agent\cache"
-if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force$CacheDir | Out-Null }
-$CacheFile = Join-Path$CacheDir "cache_disk_health.txt"
+if (-not (Test-Path $CacheDir)) { New-Item -ItemType Directory -Force $CacheDir | Out-Null }
+$CacheFile = Join-Path $CacheDir "cache_disk_health.txt"
 
-# 1. Logika Penjadwalan Cache Harian Pukul 16:00
+# 1. Logika Penjadwalan Cache Harian Pukul 16:00 (Otomatis refresh jika cache kosong)
 $Now = Get-Date
-$Today16 = Get-Date -Hour 16 -Minute 0 -Second 0$Last16  = if ($Now -lt$Today16) { $Today16.AddDays(-1) } else {$Today16 }
+$Today16 = Get-Date -Hour 16 -Minute 0 -Second 0
+$Last16  = if ($Now -lt $Today16) { $Today16.AddDays(-1) } else { $Today16 }
 
-$NeedUpdate =$true
+$NeedUpdate = $true
 if (Test-Path $CacheFile) {
-    $CacheMtime = (Get-Item$CacheFile).LastWriteTime
-    if ($CacheMtime -ge$Last16) {
-        $NeedUpdate =$false
+    $CacheItem = Get-Item $CacheFile
+    if ($CacheItem.LastWriteTime -ge $Last16 -and $CacheItem.Length -gt 0) {
+        $NeedUpdate = $false
     }
 }
 
 if ($NeedUpdate) {
-    if (Test-Path $CacheFile) { Remove-Item$CacheFile -Force }
+    if (Test-Path $CacheFile) { Remove-Item $CacheFile -Force }
 
     $SmartctlBin = "C:\Program Files\smartmontools\bin\smartctl.exe"
-    if (-not (Test-Path $SmartctlBin)) {$CmdCheck = Get-Command smartctl.exe -ErrorAction SilentlyContinue
-        if ($CmdCheck) { $SmartctlBin =$CmdCheck.Source }
+    if (-not (Test-Path $SmartctlBin)) {
+        $CmdCheck = Get-Command smartctl.exe -ErrorAction SilentlyContinue
+        if ($CmdCheck) { $SmartctlBin = $CmdCheck.Source }
     }
 
     $disks = Get-WmiObject Win32_DiskDrive -ErrorAction SilentlyContinue
 
-    foreach ($disk in$disks) {
-        $i =$disk.Index
+    foreach ($disk in $disks) {
+        $i = $disk.Index
         if (-not $SmartctlBin) { continue }
 
-        $json_raw = &$SmartctlBin -j -a "/dev/pd$i" 2>$null
-        $drive = if ($json_raw) { $json_raw \vert{} ConvertFrom-Json } else {$null }
+        $json_raw = & $SmartctlBin -j -a "/dev/pd$i" 2>$null
+        $drive = if ($json_raw) {
+            $json_str = if ($json_raw -is [array]) { $json_raw -join "`n" } else { $json_raw }$json_str | ConvertFrom-Json
+        } else { $null }
 
         # =====================================================================
         # FALLBACK: KHUSUS SSD NVMe INTEL VMD/RAID (JIKA SMARTCTL DIBLOKIR DRIVER)
         # Device normal yang sukses dibaca smartctl tidak akan masuk ke blok ini.
         # =====================================================================
-        if (-not $drive -or -not $drive.smart_status) {$pDisk = Get-PhysicalDisk | Where-Object { $_.DeviceId -eq$i } -ErrorAction SilentlyContinue
+        if (-not $drive -or -not $drive.smart_status) {$pDisk = Get-PhysicalDisk | Where-Object { $_.DeviceId -eq$i -or $_.DeviceId -eq [string]$i } -ErrorAction SilentlyContinue
             if ($pDisk) {
                 $counter =$pDisk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
                 $merk = if ($pDisk.FriendlyName) { $pDisk.FriendlyName.Trim() } else {$disk.Model.Trim() }
@@ -66,7 +70,7 @@ if ($NeedUpdate) {
                 } else { "Tidak terbaca" }
 
                 $detail = "Drive: NVME \vert{} Merk: $merk | Kesehatan: $health_pct \vert{} Suhu:$temp | Masa Pakai: $poh \vert{} Read: N/A \vert{} Write: N/A \vert{} Est Max TBW: N/A \vert{} Prediksi: N/A \vert{} SMART:$status"
-                "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
+                "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding ascii -Append
             }
             continue
         }
@@ -204,7 +208,7 @@ if ($NeedUpdate) {
 
         # Format Nama Service Checkmk
         $CleanMerk =$merk -replace '[^\w\s-]', ''
-        "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding utf8 -Append
+        "$kode `"Storage_Health_$CleanMerk`" - Status : OK | $detail" \vert{} Out-File -FilePath $CacheFile -Encoding ascii -Append
     }
 }
 
