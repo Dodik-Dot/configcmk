@@ -65,11 +65,13 @@ if need_update "$CACHE_FILE" "$LAST_16"; then
         bat_info=$(upower -i "$bat_path" 2>/dev/null)
         
         # Ambil State
-        raw_state=$(echo "$bat_info" | grep -i "state" | cut -d':' -f2 | xargs)
+        raw_state=$(echo "$bat_info" | grep -i "state" | head -n 1 | cut -d':' -f2 | xargs)
         case "${raw_state,,}" in
             fully-charged) state="Fully Charged" ;;
             discharging) state="Discharging" ;;
             charging) state="Charging" ;;
+            pending-charge) state="Pending Charge" ;;
+            not-charging) state="Not Charging" ;;
             empty) state="Empty" ;;
             *)
                 if [ -n "$raw_state" ]; then
@@ -81,11 +83,11 @@ if need_update "$CACHE_FILE" "$LAST_16"; then
         esac
         
         # Ambil Battery Level (percentage)
-        bat_level=$(echo "$bat_info" | grep -i "percentage" | cut -d':' -f2 | xargs | tr -d '%')
+        bat_level=$(echo "$bat_info" | grep -i "percentage" | head -n 1 | cut -d':' -f2 | xargs | tr -d '%')
         [ -z "$bat_level" ] && bat_level="N/A"
         
         # Ambil Health (capacity)
-        health_str=$(echo "$bat_info" | grep -i "capacity" | cut -d':' -f2 | xargs | tr -d '%')
+        health_str=$(echo "$bat_info" | grep -i "capacity" | head -n 1 | cut -d':' -f2 | xargs | tr -d '%')
         if [[ "$health_str" =~ ^[0-9.]+$ ]]; then
             health=$(awk "BEGIN {print int($health_str + 0.5)}")
         else
@@ -114,6 +116,7 @@ if need_update "$CACHE_FILE" "$LAST_16"; then
                 fully-charged|full) state="Fully Charged" ;;
                 discharging) state="Discharging" ;;
                 charging) state="Charging" ;;
+                "not charging"|pending-charge) state="Pending Charge" ;;
                 empty) state="Empty" ;;
                 *) state="Unknown" ;;
             esac
@@ -149,18 +152,31 @@ if need_update "$CACHE_FILE" "$LAST_16"; then
     
     # Output hasil sesuai tipe perangkat
     if [ "$has_battery" = true ]; then
-        # Evaluasi Threshold
-        # OK >= 60%, WARNING <= 40%, CRITICAL <= 20%
-        status=0
-        if [ "$health" -le 20 ]; then
+        remark=""
+
+        # Deteksi Anomali Baterai Drop / Mati (hanya bisa nyala saat charger menancap)
+        # Kondisi: Battery Level 0% (atau <= 5% dengan status tidak mengisi / tertahan di Pending Charge)
+        if [[ "$bat_level" =~ ^[0-9]+$ ]]; then
+            if [ "$bat_level" -eq 0 ] || { [ "$bat_level" -le 5 ] && [[ "${state,,}" =~ ^(pending charge|not charging|empty|unknown)$ ]]; }; then
+                health=0
+                current_cap=0
+                remark=" ❘ Remark : Battery Drop/Dead (AC Power Only)"
+            fi
+        fi
+
+        # Evaluasi Threshold:
+        # >= 60%   : OK (0)
+        # 40% - 59%: WARNING (1)
+        # <= 39%   : CRITICAL (2)
+        if [ "$health" -le 39 ]; then
             status=2
-        elif [ "$health" -le 40 ]; then
+        elif [ "$health" -le 59 ]; then
             status=1
+        else
+            status=0
         fi
         
-        # Contoh Format keluaran:
-        # 0 "Health_Battery" -  Status Battery : Fully Charged ❘ Design Capacity : 35w/h ❘ Current Capacity : 10w/h ❘ Health : 28% ❘ Battery Level : 100%
-        echo "$status \"Health_Battery\" -  Status Battery : $state ❘ Design Capacity : ${design_cap}w/h ❘ Current Capacity : ${current_cap}w/h ❘ Health : ${health}% ❘ Battery Level : ${bat_level}%" >> "$CACHE_FILE"
+        echo "$status \"Health_Battery\" -  Status Battery : $state ❘ Design Capacity : ${design_cap}w/h ❘ Current Capacity : ${current_cap}w/h ❘ Health : ${health}% ❘ Battery Level : ${bat_level}%${remark}" >> "$CACHE_FILE"
     else
         # Jika PC Desktop / Tidak ada baterai
         echo "0 \"Health_Battery\" -  Status Battery : N/A ❘ Device is PC/Desktop, there is no battery." >> "$CACHE_FILE"
