@@ -20,7 +20,7 @@ if (-not $isAdmin) {
 $ServerIP      = ""
 $WebPort       = ""
 $SiteName      = "cmk"
-$AgentVersion  = "2.5.0p14-1"
+$AgentVersion  = "2.5.0p14"
 $GithubUser    = "Dodik-Dot"
 $GithubRepo    = "configcmk"
 $Branch        = "main"
