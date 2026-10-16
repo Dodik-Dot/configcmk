@@ -13,8 +13,12 @@ if (-not $isAdmin) {
     Exit
 }
 
-# Paksa protokol TLS 1.2
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
+# Paksa protokol TLS 1.2 & TLS 1.3
+try {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
+} catch {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+}
 
 # 2. Konfigurasi Default & Parser Argumen Manual
 $ServerIP      = ""
@@ -54,7 +58,7 @@ if ([string]::IsNullOrWhiteSpace($ServerIP)) {
     $ServerIP = $PromptServer.Trim()
 }
 
-# 3. Normalisasi Host & URL Server (Mendukung NAT Port 80 Madiun & Port 8081 Kediri)
+# 3. Normalisasi Host & URL Server (Mendukung NAT Port 80 Madiun & Port Kustom Kediri)
 $CleanHost = $ServerIP -replace '^https?://', ''
 $CleanHost = $CleanHost.TrimEnd('/')
 
@@ -75,14 +79,17 @@ $BaseUrl          = "https://raw.githubusercontent.com/$GithubUser/$GithubRepo/$
 $MsiUrlVersioned  = "$CmkServer/$SiteName/check_mk/agents/check-mk-agent-${AgentVersion}.msi"
 $MsiUrlLegacy     = "$CmkServer/$SiteName/check_mk/agents/windows/check_mk_agent.msi"
 
-# Folder direktori pasti (Gunakan variabel konsisten tanpa Join-Path ambigu)
+# Folder direktori pasti
 $AgentDir         = "C:\ProgramData\checkmk\agent"
 $LocalDir         = "$AgentDir\local"
 $PluginsDir       = "$AgentDir\plugins"
 $LogDir           = "$AgentDir\log_custom"
 $CacheDir         = "$AgentDir\cache"
+$ToolsDir         = "$AgentDir\tools"
 $MsiLocalPath     = "$env:TEMP\check_mk_agent.msi"
 $RamScriptPath    = "$AgentDir\run_memtester.ps1"
+$CdiSetupPath     = "$AgentDir\setup_crystaldiskinfo.ps1"
+$UpdateScriptPath = "$AgentDir\update_checks.ps1"
 
 Write-Host "=== Memulai Instalasi Otomatis Agen Checkmk di Windows ===" -ForegroundColor Cyan
 Write-Host "Server Host : $HostOnly" -ForegroundColor Gray
@@ -91,7 +98,7 @@ Write-Host "Target Ver  : $AgentVersion" -ForegroundColor Gray
 Write-Host "Base Server : $CmkServer" -ForegroundColor Gray
 
 # 4. Buat folder yang dibutuhkan jika belum ada
-@($LocalDir, $PluginsDir, $LogDir, $CacheDir) | ForEach-Object {
+@($LocalDir, $PluginsDir, $LogDir, $CacheDir, $ToolsDir) | ForEach-Object {
     if (-not (Test-Path $_)) {
         New-Item -ItemType Directory -Force -Path $_ | Out-Null
     }
@@ -165,7 +172,7 @@ if (-not $smartctl -and -not (Test-Path "C:\Program Files\smartmontools\bin\smar
     if (-not (Test-Path "C:\Program Files\smartmontools\bin\smartctl.exe")) {
         $smartInstaller = "$env:TEMP\smartmontools-installer.exe"
         $smartUrl = "https://sourceforge.net/projects/smartmontools/files/smartmontools/7.4/smartmontools-7.4-1.win32-setup.exe/download"
-        & curl.exe -s -k -L "$smartUrl" -o "$smartInstaller"
+        & curl.exe -s -k -L --max-time 90 "$smartUrl" -o "$smartInstaller"
         if (Test-Path $smartInstaller) {
             Start-Process -FilePath $smartInstaller -ArgumentList "/S" -Wait
             Remove-Item $smartInstaller -Force -ErrorAction SilentlyContinue
@@ -188,7 +195,7 @@ if (-not (Test-Path "$hwinfoPath\HWiNFO64.exe") -and -not (Test-Path "C:\Program
     if (-not $installed) {
         if (-not (Test-Path $hwinfoPath)) { New-Item -ItemType Directory -Path $hwinfoPath -Force | Out-Null }
         $zipPath = "$env:TEMP\hwinfo.zip"
-        & curl.exe -s -k -L -A "Mozilla/5.0" "https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/windows/tools/hwi_804.zip" -o "$zipPath"
+        & curl.exe -s -k -L --max-time 60 -A "Mozilla/5.0" "$BaseUrl/tools/hwi_804.zip" -o "$zipPath"
         if ((Test-Path $zipPath) -and ((Get-Item $zipPath).Length -gt 100000)) {
             Expand-Archive -Path $zipPath -DestinationPath $hwinfoPath -Force
             Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
@@ -206,18 +213,19 @@ if ($ShouldInstall) {
     Write-Host "[-] Mengunduh installer Agen Checkmk dari server..." -ForegroundColor Yellow
     $downloadSuccess = $false
 
-    try {
-        Write-Host " -> Mencoba: $MsiUrlVersioned" -ForegroundColor Gray
-        Invoke-WebRequest -Uri $MsiUrlVersioned -OutFile $MsiLocalPath -UseBasicParsing -TimeoutSec 60
-        $downloadSuccess = $true
-    } catch {
+    foreach ($msiUrl in @($MsiUrlVersioned, $MsiUrlLegacy)) {
         try {
-            Write-Host " -> Mencoba fallback: $MsiUrlLegacy" -ForegroundColor Gray
-            Invoke-WebRequest -Uri $MsiUrlLegacy -OutFile $MsiLocalPath -UseBasicParsing -TimeoutSec 60
-            $downloadSuccess = $true
-        } catch {
-            Write-Error "Gagal mengunduh file MSI agen dari kedua URL target server!"
-        }
+            Write-Host " -> Mencoba: $msiUrl" -ForegroundColor Gray
+            if (Test-Path $MsiLocalPath) { Remove-Item $MsiLocalPath -Force -ErrorAction SilentlyContinue }
+            & curl.exe -s -k -L --max-time 90 "$msiUrl" -o "$MsiLocalPath"
+            if (-not (Test-Path $MsiLocalPath) -or (Get-Item $MsiLocalPath).Length -lt 500KB) {
+                Invoke-WebRequest -Uri $msiUrl -OutFile $MsiLocalPath -UseBasicParsing -TimeoutSec 60
+            }
+            if ((Test-Path $MsiLocalPath) -and (Get-Item $MsiLocalPath).Length -gt 500KB) {
+                $downloadSuccess = $true
+                break
+            }
+        } catch {}
     }
 
     if ($downloadSuccess) {
@@ -230,10 +238,12 @@ if ($ShouldInstall) {
             Write-Warning "Instalasi agen selesai dengan ExitCode: $($installProcess.ExitCode)"
         }
         Remove-Item $MsiLocalPath -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Error "Gagal mengunduh file MSI agen dari kedua URL target server!"
     }
 }
 
-# 7. Unduh Script Local Checks dari GitHub (Tanpa Join-Path)
+# 7. Unduh Script Local Checks dari GitHub (Dengan Cache-Busting)
 $LocalChecks = @(
     "battery_health.ps1",
     "cpu_info.ps1",
@@ -248,21 +258,22 @@ $LocalChecks = @(
     "storage_usage.ps1"
 )
 
+$CacheBust = (Get-Date).Ticks
 Write-Host "[-] Mengunduh script Local Checks dari GitHub..." -ForegroundColor Yellow
 foreach ($script in $LocalChecks) {
-    $scriptUrl   = "$BaseUrl/local_checks/$script"
+    $scriptUrl   = "$BaseUrl/local_checks/$script?v=$CacheBust"
     $destination = "$LocalDir\$script"
     
     try {
-        & curl.exe -s -k -L "$scriptUrl" -o "$destination"
-        if (Test-Path $destination) {
+        & curl.exe -s -k -L --max-time 30 "$scriptUrl" -o "$destination"
+        if ((Test-Path $destination) -and ((Get-Item $destination).Length -gt 0)) {
             Unblock-File -Path $destination -ErrorAction SilentlyContinue
             Write-Host " -> [OK] Mengunduh $script" -ForegroundColor Green
         } else {
             Write-Warning "File kosong atau gagal diunduh: $script"
         }
     } catch {
-        Write-Warning "Gagal mengunduh script: $script dari $scriptUrl. Melewati..."
+        Write-Warning "Gagal mengunduh script: $script. Melewati..."
     }
 }
 
@@ -271,15 +282,28 @@ $OfficialPlugins = @("mk_inventory.vbs", "win_license.bat")
 
 Write-Host "[-] Mengunduh Plugin Resmi Checkmk dari GitHub..." -ForegroundColor Yellow
 foreach ($plugin in $OfficialPlugins) {
-    $pluginUrl   = "$BaseUrl/plugins/$plugin"
+    $pluginUrl   = "$BaseUrl/plugins/$plugin?v=$CacheBust"
     $destination = "$PluginsDir\$plugin"
     
-    & curl.exe -s -k -L "$pluginUrl" -o "$destination"
-    if (Test-Path $destination) {
+    & curl.exe -s -k -L --max-time 30 "$pluginUrl" -o "$destination"
+    if ((Test-Path $destination) -and ((Get-Item $destination).Length -gt 0)) {
+        Unblock-File -Path $destination -ErrorAction SilentlyContinue
         Write-Host " -> [OK] Mengunduh plugin: $plugin" -ForegroundColor Green
     } else {
         Write-Warning "Gagal mengunduh plugin: $plugin"
     }
+}
+
+# 7.2 Setup CrystalDiskInfo (Fallback Pembacaan Disk Intel VMD/RAID)
+Write-Host "[-] Menyiapkan CrystalDiskInfo & Scheduled Task (Fallback Intel VMD/RST)..." -ForegroundColor Yellow
+try {
+    & curl.exe -s -k -L --max-time 30 "$BaseUrl/setup_crystaldiskinfo.ps1?v=$CacheBust" -o "$CdiSetupPath"
+    if ((Test-Path $CdiSetupPath) -and ((Get-Item $CdiSetupPath).Length -gt 0)) {
+        Unblock-File -Path $CdiSetupPath -ErrorAction SilentlyContinue
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$CdiSetupPath"
+    }
+} catch {
+    Write-Warning "Setup CrystalDiskInfo dilewati: $_"
 }
 
 # 8. Setup Penjadwalan RAM Health (Setiap Sabtu 11:00 AM)
@@ -319,9 +343,9 @@ Add-Content -Path $LogFile -Value "=== MEMTESTER END: $EndTimestamp ==="
 $RamCheckScriptContent | Out-File -FilePath $RamScriptPath -Encoding utf8 -Force
 
 $TaskName = "Checkmk_RAM_Health_Test"
-$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File '$RamScriptPath'"
+$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$RamScriptPath`""
 $Trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Saturday -At 11am
-$Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
+$Principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false | Out-Null
@@ -336,7 +360,31 @@ try {
     Write-Warning "Gagal mendaftarkan Scheduled Task untuk pengujian RAM: $_"
 }
 
-# 9. Konfigurasi Firewall & Service Checkmk
+# 8.1 Setup Auto-Update Script dari GitHub (Setiap 6 Jam)
+Write-Host "[-] Menyiapkan Scheduled Task Auto-Update Checkmk ('Checkmk_Auto_Update')..." -ForegroundColor Yellow
+try {
+    & curl.exe -s -k -L --max-time 30 "$BaseUrl/update_checks.ps1?v=$CacheBust" -o "$UpdateScriptPath"
+    if ((Test-Path $UpdateScriptPath) -and ((Get-Item $UpdateScriptPath).Length -gt 0)) {
+        Unblock-File -Path $UpdateScriptPath -ErrorAction SilentlyContinue
+        $UpdTaskName = "Checkmk_Auto_Update"
+        $UpdAction   = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$UpdateScriptPath`" -GithubUser `"$GithubUser`" -GithubRepo `"$GithubRepo`" -Branch `"$Branch`""
+        $UpdTrigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(10) -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration (New-TimeSpan -Days 1825)
+        $UpdSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+        $UpdPrincipal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+
+        if (Get-ScheduledTask -TaskName $UpdTaskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $UpdTaskName -Confirm:$false | Out-Null
+        }
+        Register-ScheduledTask -TaskName $UpdTaskName -Action $UpdAction -Trigger $UpdTrigger -Settings $UpdSettings -Principal $UpdPrincipal | Out-Null
+        Write-Host "[OK] Scheduled Task '$UpdTaskName' (tiap 6 jam) berhasil didaftarkan!" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Gagal mendaftarkan Auto-Update Task: $_"
+}
+
+# 9. Bersihkan Cache & Restart Service Checkmk
+Remove-Item "$CacheDir\cache_*.txt" -Force -ErrorAction SilentlyContinue
+
 try {
     $rule = Get-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -ErrorAction SilentlyContinue
     if (-not $rule) {
