@@ -1,34 +1,43 @@
 # ==========================================================
 # update_checks.ps1 - Auto-update script Checkmk dari GitHub
-# Repositori: Dodik-Dot/configcmk
-# Dijalankan oleh Scheduled Task "Checkmk_Auto_Update" (SYSTEM)
+# Dijalankan oleh Scheduled Task "Checkmk_Auto_Update" (SYSTEM).
+# Cara kerja:
+#   1. Ambil daftar file dari  windows/local_checks/manifest.txt  (jika ada),
+#      kalau tidak ada dipakai daftar bawaan di bawah.
+#   2. Unduh tiap file ke folder sementara, bandingkan hash (SHA256)
+#      dengan file di PC. Hanya yang BERBEDA yang diganti.
+#   3. Perbarui dirinya sendiri (update_checks.ps1) jika ada versi baru.
+# Log: C:\ProgramData\checkmk\agent\log_custom\update_checks.log
 # ==========================================================
 param(
-    [string]$GithubUser = 'Dodik-Dot',
-    [string]$GithubRepo = 'configcmk',
+    [string]$GithubUser = 'itlicensehq25',
+    [string]$GithubRepo = 'checkmk-HQ',
     [string]$Branch     = 'main'
 )
 
 $ErrorActionPreference = 'Stop'
-try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13 } catch {}
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 
 $BaseUrl   = "https://raw.githubusercontent.com/$GithubUser/$GithubRepo/$Branch/windows"
 $AgentRoot = 'C:\ProgramData\checkmk\agent'
 $LocalDir  = Join-Path $AgentRoot 'local'
 $PluginDir = Join-Path $AgentRoot 'plugins'
-$CacheDir  = Join-Path $AgentRoot 'cache'
 $LogDir    = Join-Path $AgentRoot 'log_custom'
 $LogFile   = Join-Path $LogDir 'update_checks.log'
 $TempDir   = Join-Path $env:TEMP 'checkmk_update'
 
-# Daftar bawaan sesuai struktur repo Dodik-Dot/configcmk
-$DefaultLocalList = @(
+# File yang harus masuk folder PLUGINS (bukan local)
+$PluginFiles = @('mk_inventory.ps1')
+
+# Daftar bawaan jika manifest.txt tidak ada di GitHub
+$DefaultList = @(
     'battery_health.ps1', 'cpu_info.ps1', 'disk_nvme_health.ps1', 'fan_health.ps1',
     'info_network.ps1', 'info_OS_office.ps1', 'ram_health.ps1', 'ram_usage.ps1',
-    'remote_access_id.ps1', 'remote_apps.ps1', 'storage_usage.ps1'
+    'remote_apps.ps1', 'storage_usage.ps1', 'network_internet.ps1', 'network_local.ps1',
+    'network_disconnect.ps1', 'mk_inventory.ps1'
 )
 
-foreach ($d in @($LogDir, $LocalDir, $PluginDir, $CacheDir, $TempDir)) {
+foreach ($d in @($LogDir, $LocalDir, $PluginDir, $TempDir)) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
 }
 
@@ -43,25 +52,12 @@ function Write-Log {
     } catch {}
 }
 
-function Download-FileSafe {
-    param([string]$Url, [string]$OutFile)
-    $cacheBustUrl = "$Url?v=$((Get-Date).Ticks)"
-    if (Test-Path $OutFile) { Remove-Item $OutFile -Force -ErrorAction SilentlyContinue }
-    
-    # Utama: curl.exe (Bebas bug TLS PowerShell 5.1)
-    & curl.exe -s -k -L --max-time 30 "$cacheBustUrl" -o "$OutFile" 2>$null
-    
-    # Fallback: Invoke-WebRequest jika curl gagal
-    if (-not (Test-Path $OutFile) -or (Get-Item $OutFile).Length -eq 0) {
-        Invoke-WebRequest -Uri $cacheBustUrl -OutFile $OutFile -UseBasicParsing -TimeoutSec 30
-    }
-}
-
+# Unduh $Url ke file sementara; ganti $Dest hanya jika isinya berbeda. Return: 'updated' / 'same'
 function Sync-File {
     param([string]$Url, [string]$Dest)
     $tmp = Join-Path $TempDir ([IO.Path]::GetFileName($Dest) + '.new')
-    Download-FileSafe -Url $Url -OutFile $tmp
-    if (-not (Test-Path $tmp) -or (Get-Item $tmp).Length -eq 0) { throw 'file kosong atau gagal diunduh' }
+    Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing
+    if (-not (Test-Path $tmp) -or (Get-Item $tmp).Length -eq 0) { throw 'file kosong' }
 
     $same = $false
     if (Test-Path $Dest) {
@@ -70,53 +66,43 @@ function Sync-File {
     if ($same) { Remove-Item $tmp -Force; return 'same' }
 
     Copy-Item $tmp $Dest -Force
-    Unblock-File -Path $Dest -ErrorAction SilentlyContinue
     Remove-Item $tmp -Force
     return 'updated'
 }
 
-# ---------- 1. Ambil Daftar File ----------
-$files = @($DefaultLocalList)
+# ---------- 1. Daftar file ----------
+$files = @($DefaultList)
 try {
     $manifestTmp = Join-Path $TempDir 'manifest.txt'
-    Download-FileSafe -Url "$BaseUrl/local_checks/manifest.txt" -OutFile $manifestTmp
-    if ((Test-Path $manifestTmp) -and ((Get-Item $manifestTmp).Length -gt 0)) {
-        $fromManifest = @(Get-Content $manifestTmp | ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -and -not $_.StartsWith('#') -and $_ -match '^[A-Za-z0-9_.\-]+\.ps1$' })
-        if ($fromManifest.Count -gt 0) { $files = $fromManifest }
-    }
+    Invoke-WebRequest -Uri "$BaseUrl/local_checks/manifest.txt" -OutFile $manifestTmp -UseBasicParsing
+    $fromManifest = @(Get-Content $manifestTmp | ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -and -not $_.StartsWith('#') -and $_ -match '^[A-Za-z0-9_.\-]+\.ps1$' })
+    if ($fromManifest.Count -gt 0) { $files = $fromManifest }
     Remove-Item $manifestTmp -Force -ErrorAction SilentlyContinue
-} catch {}
+} catch {
+    # tidak ada manifest -> pakai daftar bawaan
+}
 
-# ---------- 2. Sinkronkan Local Checks ----------
+# ---------- 2. Sinkronkan ----------
 $updated = 0
 $failed  = 0
 foreach ($f in $files) {
     $dest = Join-Path $LocalDir $f
+    if ($PluginFiles -contains $f) { $dest = Join-Path $PluginDir $f }
     try {
         $r = Sync-File -Url "$BaseUrl/local_checks/$f" -Dest $dest
-        if ($r -eq 'updated') {
-            $updated++
-            Write-Log "DIPERBARUI: $f"
-        }
+        if ($r -eq 'updated') { $updated++; Write-Log "DIPERBARUI: $f" }
     } catch {
         $failed++
         Write-Log "GAGAL: $f ($($_.Exception.Message))"
     }
 }
-
-# Jika ada script yang diperbarui, bersihkan cache agar hasil baru langsung tampil di Checkmk
-if ($updated -gt 0) {
-    Remove-Item "$CacheDir\cache_*.txt" -Force -ErrorAction SilentlyContinue
-    Write-Log "Cache dibersihkan karena ada $updated script yang diperbarui."
-}
-
 Write-Log "Selesai. diperbarui=$updated gagal=$failed total=$($files.Count)"
 
 # ---------- 3. Perbarui diri sendiri ----------
 try {
     if ($PSCommandPath) {
         $r = Sync-File -Url "$BaseUrl/update_checks.ps1" -Dest $PSCommandPath
-        if ($r -eq 'updated') { Write-Log 'update_checks.ps1 sendiri diperbarui.' }
+        if ($r -eq 'updated') { Write-Log 'update_checks.ps1 sendiri diperbarui (berlaku di jalan berikutnya)' }
     }
 } catch {}
