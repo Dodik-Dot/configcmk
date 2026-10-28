@@ -336,11 +336,23 @@ try {
     Write-Warning "Gagal mendaftarkan Scheduled Task untuk pengujian RAM: $_"
 }
 
-# 9. Konfigurasi Firewall & Service Checkmk
+# 9. Konfigurasi Firewall & Service Checkmk (Dibatasi ke IP Server Checkmk Cabang)
 try {
+    $allowedRemoteIps = @()
+    if ($HostOnly -match '^\d{1,3}(\.\d{1,3}){3}$') {
+        $allowedRemoteIps += $HostOnly
+    } else {
+        $resolvedIps = [System.Net.Dns]::GetHostAddresses($HostOnly) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -ExpandProperty IPAddressToString
+        if ($resolvedIps) { $allowedRemoteIps += $resolvedIps }
+    }
     $rule = Get-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -ErrorAction SilentlyContinue
-    if (-not $rule) {
-        New-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -Direction Inbound -LocalPort 6556 -Protocol TCP -Action Allow | Out-Null
+    if ($allowedRemoteIps.Count -gt 0) {
+        if ($rule) {
+            Set-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -RemoteAddress $allowedRemoteIps -Action Allow | Out-Null
+        } else {
+            New-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -Direction Inbound -LocalPort 6556 -Protocol TCP -RemoteAddress $allowedRemoteIps -Action Allow | Out-Null
+        }
+        Write-Host "[OK] Firewall TCP 6556 dibatasi khusus untuk IP Server Checkmk Cabang: $($allowedRemoteIps -join ', ')" -ForegroundColor Green
     }
 } catch {}
 
@@ -357,4 +369,4 @@ if (-not (Test-Path $ctlPath)) {
 
 Write-Host "`n=== Proses Instalasi Selesai! Agen Anda Siap Digunakan ===" -ForegroundColor Green
 Write-Host "Untuk mendaftarkan sertifikat agen ke server Checkmk, jalankan perintah berikut sebagai Administrator:" -ForegroundColor Green
-Write-Host " & `"$ctlPath`" register --hostname <NAMA_HOST> --server ${HostOnly}:8000 --site$SiteName --user cmkadmin" -ForegroundColor Yellow
+Write-Host " & `"$ctlPath`" register --hostname <NAMA_HOST> --server ${HostOnly}:8000 --site $SiteName --user cmkadmin" -ForegroundColor Yellow
