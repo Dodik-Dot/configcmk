@@ -206,14 +206,14 @@ GITHUB_RAW_BASE="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANC
 INVENTORY_GITHUB_URL="${GITHUB_RAW_BASE}/linux/plugins/mk_inventory.linux?v=$(date +%s)"
 
 # Coba unduh dari repositori GitHub
-if curl -sSfL "${INVENTORY_GITHUB_URL}" -o "${INVENTORY_FILE}" && [ -s "${INVENTORY_FILE}" ]; then
+if curl -sSfL "${INVENTORY_GITHUB_URL}" | tr -d '\r' > "${INVENTORY_FILE}" && [ -s "${INVENTORY_FILE}" ]; then
     chmod +x "${INVENTORY_FILE}"
     echo -e "\e[32m[SUCCESS] Plugin mk_inventory.linux berhasil dipasang dari GitHub.\e[0m"
 else
     # Fallback jika unduh GitHub gagal: Ambil langsung dari Server Checkmk
     echo -e "\e[33m[WARNING] Gagal mengunduh dari GitHub, mengambil langsung dari Server Checkmk...\e[0m"
     SERVER_PLUGIN_URL="http://${SERVER_IP}/${SITE_ID}/check_mk/agents/plugins/mk_inventory.linux"
-    if curl -sSfL "${SERVER_PLUGIN_URL}" -o "${INVENTORY_FILE}" && [ -s "${INVENTORY_FILE}" ]; then
+    if curl -sSfL "${SERVER_PLUGIN_URL}" | tr -d '\r' > "${INVENTORY_FILE}" && [ -s "${INVENTORY_FILE}" ]; then
         chmod +x "${INVENTORY_FILE}"
         echo -e "\e[32m[SUCCESS] Plugin mk_inventory.linux berhasil dipasang dari Server Checkmk.\e[0m"
     else
@@ -255,7 +255,7 @@ for script in "${SCRIPTS[@]}"; do
     TARGET_PATH="${LOCAL_CHECKS_DIR}/${script}"
 
     echo "Mengunduh: ${script}..."
-    if curl -sSfL -o "${TARGET_PATH}" "${SCRIPT_URL}"; then
+    if curl -sSfL "${SCRIPT_URL}" | tr -d '\r' > "${TARGET_PATH}" && [ -s "${TARGET_PATH}" ]; then
         chmod +x "${TARGET_PATH}"
         echo -e "\e[32m[SUCCESS] Berhasil memasang ${script}\e[0m"
     else
@@ -345,3 +345,7 @@ echo -e "\e[32m- HDSentinel: Terpasang di /usr/local/bin/hdsentinel\e[0m"
 echo -e "\e[32m- HW/SW Inventory: Terpasang di /usr/lib/check_mk_agent/plugins/mk_inventory.linux\e[0m"
 echo -e "\e[32m- Ping Monitor (3 Target + Log 30d): Aktif di /var/log/checkmk_custom/ping_history.log\e[0m"
 echo -e "\e[32m===================================================\e[0m"
+
+SERVER_HOST=$(echo "$SERVER_IP" | sed -e 's|^https\?://||' -e 's|:[0-9]\+.*||' -e 's|/.*||')
+echo -e "\nUntuk mendaftarkan sertifikat agen TLS ke server Checkmk, jalankan:"
+echo -e "\e[33msudo cmk-agent-ctl register --hostname <NAMA_HOST> --server ${SERVER_HOST}:8000 --site ${SITE_ID} --user cmkadmin\e[0m"
