@@ -36,6 +36,10 @@ ensure_vendor_fan_modules() {
             ;;
         *MICRO-STAR*|*MSI*)
             modprobe nct6683 force=1 2>/dev/null || modprobe nct6683 2>/dev/null || true
+            if [ -w /etc/modules ] && ! grep -q "^nct6683" /etc/modules 2>/dev/null; then
+                echo "nct6683" >> /etc/modules 2>/dev/null || true
+                echo "options nct6683 force=1" > /etc/modprobe.d/nct6683.conf 2>/dev/null || true
+            fi
             modprobe nct6687 2>/dev/null || true
             modprobe nct6775 2>/dev/null || true
             ;;
