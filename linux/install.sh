@@ -108,6 +108,8 @@ echo -e "\e[32m[INFO] Menginstal dependensi sistem, smartmontools, & tools hardw
 if [ "$OS_TYPE" = "debian" ]; then
     apt-get update -y
     apt-get install -y curl smartmontools memtester lm-sensors jq upower bc gzip tar dmidecode pciutils iproute2 iputils-ping
+    # Pastikan paket modul kernel hwmon tambahan terpasang (nct6683, nct6775, dell_smm, dll.)
+    apt-get install -y "linux-modules-extra-$(uname -r)" 2>/dev/null || apt-get install -y linux-modules-extra-generic 2>/dev/null || true
 elif [ "$OS_TYPE" = "redhat" ]; then
     if [ "$PKG_MANAGER" = "dnf" ]; then
         dnf install -y epel-release 2>/dev/null || true
@@ -262,6 +264,34 @@ for script in "${SCRIPTS[@]}"; do
         echo -e "\e[31m[WARNING] Gagal mengunduh ${script} dari GitHub. Silakan periksa path atau visibilitas repositori.\e[0m"
     fi
 done
+
+# ==============================================================================
+# Setup Sensor Kernel Modules (Khusus Motherboard Desktop & Laptop Baru)
+# ==============================================================================
+echo -e "\e[32m[INFO] Memeriksa modul kernel hardware sensor (Motherboard & CPU Fan)...\e[0m"
+SYS_VENDOR=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo "")
+SYS_PRODUCT=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo "")
+COMBINED_DMI="${SYS_VENDOR} ${SYS_PRODUCT}"
+
+# Deteksi Motherboard Desktop MSI (seperti MS-7E02 / H610 / B660 / B760) -> Nuvoton NCT6687D
+if echo "$COMBINED_DMI" | grep -iqE "MICRO-STAR|MSI|MS-7"; then
+    echo "[INFO] Terdeteksi motherboard MSI ($SYS_PRODUCT). Mengaktifkan modul sensor Nuvoton (nct6683 / nct6775)..."
+    modprobe nct6683 force=1 2>/dev/null || modprobe nct6683 2>/dev/null || modprobe nct6687 2>/dev/null || modprobe nct6775 2>/dev/null || true
+    if lsmod | grep -q "nct6683"; then
+        grep -q "^nct6683" /etc/modules 2>/dev/null || echo "nct6683" >> /etc/modules 2>/dev/null || true
+        echo "options nct6683 force=1" > /etc/modprobe.d/nct6683.conf 2>/dev/null || true
+    elif lsmod | grep -q "nct6687"; then
+        grep -q "^nct6687" /etc/modules 2>/dev/null || echo "nct6687" >> /etc/modules 2>/dev/null || true
+    elif lsmod | grep -q "nct6775"; then
+        grep -q "^nct6775" /etc/modules 2>/dev/null || echo "nct6775" >> /etc/modules 2>/dev/null || true
+    fi
+fi
+
+# Deteksi Dell Laptop / Desktop
+if echo "$COMBINED_DMI" | grep -iqE "DELL"; then
+    echo "[INFO] Terdeteksi hardware Dell. Mengaktifkan modul dell_smm_hwmon..."
+    modprobe dell_smm_hwmon ignore_dmi=1 restricted=0 2>/dev/null || modprobe dell_smm_hwmon 2>/dev/null || true
+fi
 
 # ==============================================================================
 # Setup IP Gateway Cabang & Cron 1 Menit untuk Ping Monitor (3 Target + Retensi 30d)
