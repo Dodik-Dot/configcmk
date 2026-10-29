@@ -9,7 +9,7 @@
 Ekosistem pemantauan infrastruktur (*monitoring agent suite*) kelas produksi untuk **Checkmk** yang menyatukan pengawasan perangkat **Linux Host**, **Windows Client/Server**, dan **Android Industrial PDA (Newland NLS-MT93 & Generic Android)** ke dalam satu standar metrik, format output, dan ambang batas (*threshold*) yang seragam.
 
 Seluruh kode sumber, skrip _local checks_, aplikasi native Android (`cmkagent`), _auto-updater_, serta pipeline CI/CD dikelola secara terpusat di repositori **`Dodik-Dot/configcmk`**.  
-*(Kredit & apresiasi untuk Mas Aziz atas fondasi awal pada `andin1st/scriptcmk`)*
+
 
 ---
 
