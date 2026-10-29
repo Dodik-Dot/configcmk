@@ -82,11 +82,11 @@ jobs:
       - name: Rename APK
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk \
-             android/cmkagent-v1.3.6.apk
+             android/cmkagent-v1.3.7.apk
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cmkagent-v1.3.6
+          name: cmkagent-v1.3.7
           path: |
-            android/cmkagent-v1.3.6.apk
+            android/cmkagent-v1.3.7.apk
