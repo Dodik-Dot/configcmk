@@ -34,12 +34,18 @@ ensure_vendor_fan_modules() {
         *DELL*)
             modprobe dell_smm_hwmon ignore_dmi=1 restricted=0 2>/dev/null || modprobe dell_smm_hwmon 2>/dev/null || true
             ;;
+        *MICRO-STAR*|*MSI*)
+            modprobe nct6683 force=1 2>/dev/null || modprobe nct6683 2>/dev/null || true
+            modprobe nct6687 2>/dev/null || true
+            modprobe nct6775 2>/dev/null || true
+            ;;
         *LENOVO*|*THINKPAD*)
             modprobe thinkpad_acpi 2>/dev/null || true
             ;;
         *ASUS*|*ASUSTEK*)
             modprobe asus_nb_wmi 2>/dev/null || true
             modprobe asus_wmi 2>/dev/null || true
+            modprobe nct6775 2>/dev/null || true
             ;;
         *HP*|*HEWLETT*)
             modprobe hp_wmi 2>/dev/null || true
@@ -52,7 +58,9 @@ ensure_vendor_fan_modules() {
             ;;
     esac
 
-    # Modul Super I/O populer pada motherboard PC Desktop modern (ASUS/MSI/Gigabyte/ASRock)
+    # Modul Super I/O populer pada motherboard PC Desktop modern (MSI/ASUS/Gigabyte/ASRock)
+    modprobe nct6683 force=1 2>/dev/null || modprobe nct6683 2>/dev/null || true
+    modprobe nct6687 2>/dev/null || true
     modprobe nct6775 2>/dev/null || true
     modprobe it87 2>/dev/null || true
 }
