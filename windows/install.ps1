@@ -378,6 +378,26 @@ if (Test-Path $InfoNetScript) {
     }
 }
 
+# 8.2 Setup Auto-Update Skrip Otomatis dari GitHub (Setiap 2 Jam)
+Write-Host "[-] Menyiapkan penjadwalan Auto-Update skrip dari GitHub (Setiap 2 Jam)..." -ForegroundColor Yellow
+$UpdaterPath = "$AgentDir\update_checks.ps1"
+$UpdaterUrl  = "$BaseUrl/update_checks.ps1"
+try {
+    & curl.exe -s -k -L "$UpdaterUrl" -o "$UpdaterPath"
+    if (Test-Path $UpdaterPath) {
+        Unblock-File -Path $UpdaterPath -ErrorAction SilentlyContinue
+        $AutoUpdateTask = "Checkmk_Auto_Update"
+        $UpdateAction   = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$UpdaterPath`" -GithubUser `"$GithubUser`" -GithubRepo `"$GithubRepo`" -Branch `"$Branch`""
+        $UpdateTrigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Hours 2) -RepetitionDuration (New-TimeSpan -Days 3650)
+        $UpdatePrincipal= New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $UpdateSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
+        Register-ScheduledTask -TaskName $AutoUpdateTask -Action $UpdateAction -Trigger $UpdateTrigger -Principal $UpdatePrincipal -Settings $UpdateSettings -Force | Out-Null
+        Write-Host "[OK] Windows Task Scheduler '$AutoUpdateTask' berhasil diaktifkan (Auto-Update tiap 2 jam)!" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Gagal mendaftarkan Scheduled Task Auto-Update: $_"
+}
+
 # 9. Konfigurasi Firewall & Service Checkmk (Dibatasi ke IP Server Checkmk Cabang)
 try {
     $allowedRemoteIps = @()

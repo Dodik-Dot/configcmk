@@ -151,6 +151,7 @@ Dodik-Dot/configcmk/
 │       └── WifiRoamingTracker.java      # Pelacak perpindahan BSSID Access Point (UniFi OUI & Multi-AP)
 ├── linux/
 │   ├── install.sh                       # Bootstrap installer otomatis Linux (Debian/Ubuntu & RHEL/Fedora)
+│   ├── update_checks.sh                 # Auto-updater skrip local checks Linux berbasis hash SHA-256 (tiap 2 jam)
 │   ├── plugins/
 │   │   └── mk_inventory.linux           # Plugin resmi HW/SW Inventory Linux
 │   └── local_checks/                    # 10 Skrip Local Checks Linux (Bash)
@@ -227,10 +228,14 @@ sudo bash -s -- -s <IP_SERVER_CABANG>:<PORT_WEB> -d cmk -v 2.5.0p14-1
 ```
 > **Daftar Argumen `linux/install.sh`:**
 > - `-s, --server` : IP atau `IP:Port` Server Checkmk Cabang (contoh: `192.168.x.x:8081` atau `192.168.x.x:8080` atau `192.168.x.x`)
+> - `-gw, --gateway`: IP Gateway Cabang untuk Ping Monitor (opsional, default: auto-detect dari routing table)
 > - `-d, --site` : Nama Site Checkmk (default: `cmk`)
 > - `-v, --version` : Versi paket agen Checkmk (default: `2.5.0p14-1`)
 > - `-g, --github` : Repositori GitHub sumber skrip (default: `Dodik-Dot/configcmk`)
 > - `-b, --branch` : Branch repositori (default: `main`)
+
+#### Pembaruan Otomatis Linux (Auto-Updater SHA-256 Tiap 2 Jam):
+Saat menjalankan `install.sh`, sistem otomatis memasang skrip [`linux/update_checks.sh`](linux/update_checks.sh) ke `/usr/local/bin/update_checks.sh` dan mendaftarkan cron job `/etc/cron.d/checkmk_auto_update`. Setiap **2 jam**, PC Linux akan memeriksa apakah ada pembaruan skrip di GitHub dan hanya menimpa file apabila hash **SHA-256** berubah (log tercatat di `/var/log/checkmk_custom/update_checks.log`).
 
 #### Verifikasi Lokal di Linux:
 ```bash
@@ -265,10 +270,12 @@ Pada PC Windows yang menggunakan kontroler penyimpanan tertentu di mana WMI terb
 powershell -ExecutionPolicy Bypass -File .\windows\setup_crystaldiskinfo.ps1
 ```
 
-#### (Opsional) Pembaruan Otomatis Local Checks (Auto-Updater SHA-256)
-Skrip [`windows/update_checks.ps1`](windows/update_checks.ps1) dapat dijalankan secara manual atau melalui *Scheduled Task* untuk menyinkronkan ke-11 skrip PowerShell langsung dari GitHub `Dodik-Dot/configcmk` (hanya mengganti file apabila *hash* SHA-256 berubah):
+#### Pembaruan Otomatis Windows (Auto-Updater SHA-256 Tiap 2 Jam)
+Saat menjalankan `install.ps1`, skrip [`windows/update_checks.ps1`](windows/update_checks.ps1) otomatis dipasang ke `C:\ProgramData\checkmk\agent\update_checks.ps1` dan didaftarkan ke Windows Task Scheduler dengan nama **`Checkmk_Auto_Update`**. Setiap **2 jam**, komputer akan memeriksa GitHub dan menyinkronkan ke-11 skrip PowerShell serta plugin inventaris secara otomatis (hanya mengganti file apabila *hash* SHA-256 berubah). Log audit tersimpan di `C:\ProgramData\checkmk\agent\log_custom\update_checks.log`.
+
+Anda juga dapat memicu update secara manual kapan saja dengan perintah:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\windows\update_checks.ps1
+powershell -ExecutionPolicy Bypass -File C:\ProgramData\checkmk\agent\update_checks.ps1
 ```
 
 ---

@@ -293,6 +293,24 @@ EOF
 fi
 
 # ==============================================================================
+# Setup Auto-Update Skrip Otomatis dari GitHub (Setiap 2 Jam)
+# ==============================================================================
+echo -e "\e[32m[INFO] Mengonfigurasi Auto-Update skrip dari GitHub (Setiap 2 Jam)...\e[0m"
+UPDATER_PATH="/usr/local/bin/update_checks.sh"
+UPDATER_URL="${GITHUB_RAW_BASE}/linux/update_checks.sh?v=$(date +%s)"
+
+if curl -sSfL "${UPDATER_URL}" | tr -d '\r' > "${UPDATER_PATH}" && [ -s "${UPDATER_PATH}" ]; then
+    chmod +x "${UPDATER_PATH}"
+    cat <<EOF > /etc/cron.d/checkmk_auto_update
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+0 */2 * * * root ${UPDATER_PATH} >/dev/null 2>&1
+EOF
+    chmod 644 /etc/cron.d/checkmk_auto_update
+    echo -e "\e[32m[SUCCESS] Cron job Auto-Update aktif setiap 2 jam (/etc/cron.d/checkmk_auto_update)\e[0m"
+fi
+
+# ==============================================================================
 # Setup Asynchronous Memtester Runner
 # ==============================================================================
 echo -e "\e[32m[INFO] Mengonfigurasi Runner Memtester Asinkron...\e[0m"
