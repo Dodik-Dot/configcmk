@@ -3,7 +3,7 @@
 ![Checkmk](https://img.shields.io/badge/Checkmk-2.3.0%20%7C%202.5.0p14-13d38e?style=for-the-badge&logo=checkmk&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-Debian%20%7C%20Ubuntu%20%7C%20RHEL-FCC624?style=for-the-badge&logo=linux&logoColor=black)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011%20%7C%20Server-0078D6?style=for-the-badge&logo=windows&logoColor=white)
-![Android](https://img.shields.io/badge/Android%20PDA-cmkagent%20v1.3.6-3DDC84?style=for-the-badge&logo=android&logoColor=black)
+![Android](https://img.shields.io/badge/Android%20PDA-cmkagent%20v1.3.7-3DDC84?style=for-the-badge&logo=android&logoColor=black)
 ![Docker](https://img.shields.io/badge/Docker-Compose%20Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
 Ekosistem pemantauan infrastruktur (*monitoring agent suite*) kelas produksi untuk **Checkmk** yang menyatukan pengawasan perangkat **Linux Host**, **Windows Client/Server**, dan **Android Industrial PDA (Newland NLS-MT93 & Generic Android)** ke dalam satu standar metrik, format output, dan ambang batas (*threshold*) yang seragam.
@@ -22,7 +22,7 @@ Seluruh kode sumber, skrip _local checks_, aplikasi native Android (`cmkagent`),
    - [Tahap 1: Menjalankan Server Checkmk (Docker Compose)](#tahap-1-menjalankan-server-checkmk-docker-compose)
    - [Tahap 2: Deployment Agen pada Linux Host](#tahap-2-deployment-agen-pada-linux-host)
    - [Tahap 3: Deployment Agen pada Windows Host](#tahap-3-deployment-agen-pada-windows-host)
-   - [Tahap 4: Pemasangan & Konfigurasi pada Android PDA (`cmkagent v1.3.6`)](#tahap-4-pemasangan--konfigurasi-pada-android-pda-cmkagent-v136)
+   - [Tahap 4: Pemasangan & Konfigurasi pada Android PDA (`cmkagent v1.3.7`)](#tahap-4-pemasangan--konfigurasi-pada-android-pda-cmkagent-v137)
    - [Tahap 5: Pendaftaran Host & Service Discovery di Checkmk Server](#tahap-5-pendaftaran-host--service-discovery-di-checkmk-server)
    - [Tahap 6: Penggunaan Hybrid Push Receiver (`server-test`)](#tahap-6-penggunaan-hybrid-push-receiver-server-test)
 5. [Matriks Standardisasi Threshold & Alerting](#-5-matriks-standardisasi-threshold--alerting)
@@ -54,7 +54,7 @@ flowchart TD
     subgraph Clients["Armada Perangkat Client & Cabang"]
         L["Linux Host (Ubuntu/Debian/RHEL)<br/>Bash Local Checks (10) + Cron"]
         W["Windows Client/Server<br/>PowerShell Checks (11) + Task Scheduler"]
-        A["Android PDA (Newland MT93)<br/>cmkagent v1.3.6 (Java Foreground Svc)"]
+        A["Android PDA (Newland MT93)<br/>cmkagent v1.3.7 (Java Foreground Svc)"]
     end
 
     subgraph Transport["Jalur Komunikasi & Keamanan"]
@@ -87,7 +87,10 @@ flowchart TD
 4. **APIs & Transport Protocol:**
    - Arsitektur **Hybrid Transport** pada Android PDA: jalur utama *PULL* TCP/6556 (`ServerSocket` *non-busy blocking*) ditambah jalur cadangan *PUSH* HTTP/HTTPS (`PushClient.java`) dengan *connect/read timeout* eksplisit (5–10 detik).
 5. **Storage & Log Retention (30-Day CCTV Loop Recording):**
-   - Di Android PDA, log ping per menit (`ping_history.log`) dikelola dengan **retensi bergulir 30 hari** (`LOG_RETENTION_DAYS = 30`). Saat memasuki **hari ke-31 dan seterusnya**, baris log yang berumur lebih dari 30 hari otomatis dihapus (*atomic temp-file swap*), menjaga pemakaian ruang simpan tetap stabil (~8 MB) seperti DVR CCTV.
+   - Di seluruh platform (**Linux**, **Windows**, dan **Android PDA**), log ping per menit (`ping_history.log`) dikelola dengan **retensi bergulir 30 hari** (`LOG_RETENTION_DAYS = 30`). Saat memasuki **hari ke-31 dan seterusnya**, baris log yang berumur lebih dari 30 hari otomatis dihapus (*atomic temp-file swap*), menjaga pemakaian ruang simpan tetap stabil (~8 MB) seperti DVR CCTV:
+     - **Linux**: `/var/log/checkmk_custom/ping_history.log` (Konfigurasi Gateway: `/etc/check_mk/gateway_ip.conf`)
+     - **Windows**: `C:\ProgramData\checkmk\agent\log_custom\ping_history.log` (Konfigurasi Gateway: `C:\ProgramData\checkmk\agent\config\gateway_ip.txt`)
+     - **Android PDA**: `ping_history.log` pada internal/external files aplikasi `cmkagent`
    - Di `receiver.py`, penyimpanan payload memakai `tempfile.mkstemp` + `os.fsync` + `os.replace` (*atomic file replacement*) agar file tidak pernah korup saat dibaca bersamaan.
 6. **Auth & Permissions:**
    - Pendaftaran agen Linux/Windows terenkripsi mTLS melalui `cmk-agent-ctl` (port `8000`).
@@ -107,7 +110,7 @@ flowchart TD
     - Menghemat baterai PDA dan beban CPU client dengan TTL bertingkat:
       - *Real-time (60 dtk)*: `Agent_Status`, `Health_Battery` (1 baris terpadu), `WiFi_Status` (termasuk deteksi Roaming AP), `Android_Info`
       - *Cache 30 Menit (`1800s`)*: `RAM_Usage`
-      - *Cache 1 Jam (`3600s`)*: `Ping_192.168.122.10` & `Ping_8.8.8.8` (agregasi 60 menit / 240 paket ping)
+      - *Cache 1 Jam (`3600s`)*: `Ping_192.168.122.10`, `Ping_8.8.8.8`, & `Ping_Gateway` (agregasi 60 menit / 240 paket ping ke Gateway kantor cabang)
       - *Cache 3 Jam (`10800s`)*: `Transport_Status`
       - *Cache 24 Jam (`86400s`)*: `Storage_Usage`
       - *Cache Mingguan (Setiap Hari Minggu)*: `HW/SW Inventory` aplikasi terpasang
@@ -128,10 +131,10 @@ flowchart TD
 Dodik-Dot/configcmk/
 ├── .github/
 │   └── workflows/
-│       └── build-cmkagent.yml           # Pipeline CI/CD build otomatis APK Android (cmkagent v1.3.6)
+│       └── build-cmkagent.yml           # Pipeline CI/CD build otomatis APK Android (cmkagent v1.3.7)
 ├── .gitignore                           # Aturan pengabaian file sementara, keystore, & build artifact
 ├── README.md                            # Dokumentasi utama lintas platform (Linux, Windows, Android, Docker)
-├── README-ANDROID.md                    # Dokumentasi teknis mendalam khusus Android PDA (cmkagent v1.3.6)
+├── README-ANDROID.md                    # Dokumentasi teknis mendalam khusus Android PDA (cmkagent v1.3.7)
 ├── docker-compose-checkmk.yml           # Konfigurasi container server Checkmk Raw Edition
 ├── android/                             # Proyek Android Native (Java 17 + Gradle 8.9)
 │   └── app/src/main/java/com/bcp/checkmkagent/
@@ -270,17 +273,17 @@ powershell -ExecutionPolicy Bypass -File .\windows\update_checks.ps1
 
 ---
 
-### Tahap 4: Pemasangan & Konfigurasi pada Android PDA (`cmkagent v1.3.6`)
+### Tahap 4: Pemasangan & Konfigurasi pada Android PDA (`cmkagent v1.3.7`)
 
 Aplikasi Android native **`cmkagent`** dirancang khusus untuk memantau armada PDA industri (seperti **Newland NLS-MT93** maupun perangkat Android umum) secara efisien tanpa menguras baterai.
 
-#### A. Cara Mendapatkan File APK (`cmkagent-v1.3.6.apk`)
+#### A. Cara Mendapatkan File APK (`cmkagent-v1.3.7.apk`)
 1. Buka tab **Actions** pada repositori GitHub `Dodik-Dot/configcmk` -> pilih workflow **Build Checkmk Android Agent APK**.
-2. Unduh artefak **`cmkagent-v1.3.6`** yang berisi berkas `cmkagent-v1.3.6.apk` yang sudah ditandatangani (*signed*).
+2. Unduh artefak **`cmkagent-v1.3.7`** yang berisi berkas `cmkagent-v1.3.7.apk` yang sudah ditandatangani (*signed*).
 3. *(Atau build secara lokal menggunakan Android Studio / Gradle 8.9 + JDK 17 dengan menjalankan `./gradlew assembleRelease` di dalam direktori `android/`).*
 
 #### B. Langkah Setting Pertama Kali di Perangkat PDA
-1. **Instal APK:** Pasang `cmkagent-v1.3.6.apk` di PDA. *(Jika sebelumnya terpasang versi lama dengan signature berbeda, lakukan Uninstall versi lama terlebih dahulu).*
+1. **Instal APK:** Pasang `cmkagent-v1.3.7.apk` di PDA. *(Jika sebelumnya terpasang versi lama dengan signature berbeda, lakukan Uninstall versi lama terlebih dahulu).*
 2. **Izinkan Permission & Battery Unrestricted:**
    - Saat aplikasi pertama kali dibuka, berikan izin **Location (Fine Location)** dan **Nearby Wi-Fi Devices** (diperlukan oleh OS Android agar nama SSID dan alamat MAC BSSID Access Point saat roaming dapat terbaca).
    - Ketuk tombol **`BATTERY UNRESTRICTED`** pada kartu **NETWORK** dan pilih **Tidak ada batasan (*Unrestricted*)** agar proses ping 1 menit dan listener TCP/6556 tidak dimatikan saat layar PDA terkunci.
@@ -291,12 +294,18 @@ Aplikasi Android native **`cmkagent`** dirancang khusus untuk memantau armada PD
      Kolom ini sengaja ditampilkan **kosong tanpa IP default** demi keamanan. Masukkan alamat Server Checkmk sesuai cabang tempat PDA beroperasi:
      - **Apakah perlu memasukkan port web cabang (`:8081`, `:8080`, `:80`)?**  
        Secara teknis protokol Checkmk PULL bekerja dari IP Server menuju port `6556` di PDA, sehingga firewall PDA memvalidasi **alamat IP asal server**. Namun, kolom ini **sudah dirancang mendukung keduanya**: Anda bebas mengetik **IP saja** (misal `192.168.x.x`) **ataupun lengkap dengan port web cabang** (misal `192.168.x.x:8081`, `192.168.x.x:8080`, atau `192.168.x.x:80`). Sistem akan otomatis mengekstrak IP murninya untuk filter firewall port `6556`.
+   - **IP Gateway Cabang (Ping Monitor Baris ke-3):**  
+     Karena setiap kantor cabang memiliki subnet dan router gateway yang berbeda, kolom ini diisi manual saat setting pertama kali (contoh: `192.168.55.1` atau `192.168.122.1`). Tersedia juga tombol **`AUTO-DETECT GATEWAY DARI WI-FI`** untuk mendeteksi alamat IP router/gateway secara otomatis dari jaringan Wi-Fi yang sedang aktif.
    - **Design Capacity (mAh):** Biarkan `0` (otomatis mengenali Newland MT93 dengan `Design Spec = 4800 mAh` dan titik kalibrasi penuh `100% Full Capacity = 2946 mAh`).
    - Centang **Start agent otomatis setelah boot**, lalu ketuk tombol hijau **`SAVE & START AGENT`**.
 
-#### C. Fitur Unggulan `cmkagent v1.3.6` di PDA
+#### C. Fitur Unggulan `cmkagent v1.3.7` di PDA
 - **Menu Baterai 1 Baris Terpadu (`Health_Battery`):** Menyatukan Level, Status, Real Health (berbasis kapasitas penuh hardware `2946 mAh` saat 100% charge), penghitung Siklus Charging (`Cycles`) kontinu, Full Capacity, Design Spec (`4800 mAh`), Suhu, Tegangan, dan Arus ke dalam **1 baris tunggal**.
-- **Ping 4x Setiap 1 Menit + Retensi Log 30 Hari ala CCTV:** Melakukan ping 4x setiap 1 menit ke `192.168.122.10` dan `8.8.8.8`. Data dikumpulkan di HP dan dikirim ke Checkmk setiap **1 jam** dalam **2 baris service terpisah** (`Ping_192.168.122.10` dan `Ping_8.8.8.8`). Log harian tersimpan di `ping_history.log` selama **30 hari** dan otomatis menghapus log di **hari ke-31 dan seterusnya** seperti rekaman CCTV (dapat dicek melalui tombol **`VIEW PING LOG`**).
+- **Ping 4x Setiap 1 Menit (3 Baris Target) + Retensi Log 30 Hari ala CCTV:** Melakukan ping 4x setiap 1 menit ke 3 target terpisah:
+  1. `Ping_192.168.122.10` (Server Internal / Core LAN)
+  2. `Ping_8.8.8.8` (Public DNS / Akses Internet Global)
+  3. `Ping_Gateway` (Router Gateway Kantor Cabang yang disetting manual / auto-detect)
+  Data dikumpulkan di HP dan dikirim ke Checkmk setiap **1 jam** dalam **3 baris service terpisah** (`Ping_192.168.122.10`, `Ping_8.8.8.8`, dan `Ping_Gateway`). Log harian tersimpan di `ping_history.log` selama **30 hari** dan otomatis menghapus log di **hari ke-31 dan seterusnya** seperti rekaman CCTV (dapat dicek melalui tombol **`VIEW PING LOG`**).
 - **Deteksi Roaming Access Point (`WiFi_Status`):** Menangkap perpindahan antar Access Point (UniFi / Ubiquiti OUI termasuk *virtual BSSID* maupun AP vendor lain), menampilkan Band (`2.4GHz` / `5GHz`), Nomor Kanal (`Ch`), jumlah perpindahan AP dalam 1 jam terakhir (`roams/1h`) & total, serta riwayat perpindahan AP asal ke AP tujuan di tombol **`VIEW ROAMING LOG`**.
 
 *(Dokumentasi arsitektur internal Android selengkapnya tersedia di **[README-ANDROID.md](README-ANDROID.md)**).*
@@ -323,7 +332,7 @@ Setelah agen terpasang di Linux atau Windows, daftarkan sertifikat TLS ke server
 #### 2. Menjalankan Service Discovery di Web GUI Checkmk
 1. Masuk ke **Setup -> Hosts -> Add host**, masukkan **Hostname** dan **IPv4 Address** perangkat.
 2. Klik **Save & go to service configuration**.
-3. Klik **Rescan** atau **Tabula rasa** agar seluruh *local checks* terbaru (termasuk penyatuan 1 baris `Health_Battery` dan 2 baris `Ping_192.168.122.10` / `Ping_8.8.8.8` pada PDA) terdeteksi.
+3. Klik **Rescan** atau **Tabula rasa** agar seluruh *local checks* terbaru (termasuk penyatuan 1 baris `Health_Battery` dan 3 baris ping `Ping_192.168.122.10`, `Ping_8.8.8.8`, dan `Ping_Gateway` pada PDA) terdeteksi.
 4. Klik **Accept all** lalu klik **Activate on selected sites** di pojok kanan atas.
 
 ---
@@ -358,8 +367,9 @@ Seluruh indikator status pada Checkmk (`0 = OK`, `1 = WARNING`, `2 = CRITICAL`) 
 | **`RAM_Usage` (Memori Aktif)** | $< 85\%$ | $\ge 85\%$ | $\ge 95\%$ | Linux, Windows, Android |
 | **`Health_RAM` (Uji Memtester)** | `Passed` | - | `Failed` | Linux & Windows |
 | **`WiFi_Status` (Sinyal & Roaming)** | RSSI $> -68\text{ dBm}$ | RSSI $-68$ s/d $-75\text{ dBm}$ | RSSI $\le -75\text{ dBm}$ | Android PDA |
-| **`Ping_192.168.122.10`** | Loss $< 20\%$, RTT $< 100\text{ ms}$ | Loss $\ge 20\%$ atau RTT $\ge 100\text{ ms}$ | Loss $\ge 50\%$ atau RTT $\ge 250\text{ ms}$ | Android PDA (1 Jam) |
-| **`Ping_8.8.8.8`** | Loss $< 20\%$, RTT $< 150\text{ ms}$ | Loss $\ge 20\%$ atau RTT $\ge 150\text{ ms}$ | Loss $\ge 50\%$ atau RTT $\ge 300\text{ ms}$ | Android PDA (1 Jam) |
+| **`Ping_192.168.122.10`** | Loss $< 20\%$, RTT $< 100\text{ ms}$ | Loss $\ge 20\%$ atau RTT $\ge 100\text{ ms}$ | Loss $\ge 50\%$ atau RTT $\ge 250\text{ ms}$ | Linux, Windows, Android (1 Jam) |
+| **`Ping_8.8.8.8`** | Loss $< 20\%$, RTT $< 150\text{ ms}$ | Loss $\ge 20\%$ atau RTT $\ge 150\text{ ms}$ | Loss $\ge 50\%$ atau RTT $\ge 300\text{ ms}$ | Linux, Windows, Android (1 Jam) |
+| **`Ping_Gateway` (Gateway Cabang)** | Loss $< 20\%$, RTT $< 50\text{ ms}$ | Loss $\ge 20\%$ atau RTT $\ge 50\text{ ms}$ | Loss $\ge 50\%$ atau RTT $\ge 150\text{ ms}$ | Linux, Windows, Android (1 Jam) |
 
 ---
 
@@ -399,10 +409,15 @@ Seluruh skrip menggunakan pemisah pipa standar ASCII (`|`) pada bagian ringkasan
   ```
 
 #### 5. `info_network` (`.sh` / `.ps1`)
-- **Fungsi**: Mengukur total akumulasi unduhan/unggahan serta laju *throughput* aktual per detik (`RX Rate` & `TX Rate`) pada antarmuka jaringan utama.
+- **Fungsi**:
+  1. Mengukur total akumulasi unduhan/unggahan serta laju *throughput* aktual per detik (`RX Rate` & `TX Rate`) pada antarmuka jaringan utama (`Info_Network_<Interface>`).
+  2. Menjalankan **Ping 4x setiap 1 menit** secara paralel ke **3 target** (`192.168.122.10`, `8.8.8.8`, dan `IP Gateway Kantor Cabang`), menyimpan riwayat per menit ke `ping_history.log` dengan **retensi bergulir 30 hari ala CCTV** (hari ke-31+ otomatis dihapus), dan melaporkan rangkuman akumulasi setiap **1 jam (`3600s` / 240 paket)** ke Checkmk dalam 3 baris terpisah (`Ping_192.168.122.10`, `Ping_8.8.8.8`, dan `Ping_Gateway`).
 - **Contoh Output**:
   ```text
-  0 "Info_Network_Ethernet" in=122554432c|out=3586048c OK - IP Address: 192.168.43.33 | Total Download: 114.14 GB | Total Upload: 3.34 GB | RX Rate : 250.20 KB/s | TX Rate : 123.00 KB/s
+  0 "Info_Network_Ethernet" in=122554432c|out=3586048c OK - IP Address: 192.168.55.33 | Total Download: 114.14 GB | Total Upload: 3.34 GB | RX Rate : 250.20 KB/s | TX Rate : 123.00 KB/s
+  0 "Ping_192.168.122.10" rta=4.20ms;100;250;0|pl=0.0%;20;50;0;100|rtmin=2.10ms|rtmax=12.40ms Status : OK | Target : 192.168.122.10 | Mode : 1h Summary (60x4=240 pkt) | Loss : 0.0% (240/240 rx) | Avg RTT : 4.2 ms | Min/Max : 2.1/12.4 ms | Last : 3.8 ms | Timeout Min : 0/60 | Window : 20:50-21:50 | Log : 30d Rolling
+  0 "Ping_8.8.8.8" rta=18.50ms;150;300;0|pl=0.0%;20;50;0;100|rtmin=14.00ms|rtmax=35.10ms Status : OK | Target : 8.8.8.8 | Mode : 1h Summary (60x4=240 pkt) | Loss : 0.0% (240/240 rx) | Avg RTT : 18.5 ms | Min/Max : 14.0/35.1 ms | Last : 17.2 ms | Timeout Min : 0/60 | Window : 20:50-21:50 | Log : 30d Rolling
+  0 "Ping_Gateway" rta=1.80ms;50;150;0|pl=0.0%;20;50;0;100|rtmin=0.90ms|rtmax=4.20ms Status : OK | Target : 192.168.55.1 (Gateway Cabang) | Mode : 1h Summary (60x4=240 pkt) | Loss : 0.0% (240/240 rx) | Avg RTT : 1.8 ms | Min/Max : 0.9/4.2 ms | Last : 1.5 ms | Timeout Min : 0/60 | Window : 20:50-21:50 | Log : 30d Rolling
   ```
 
 #### 6. `info_OS_office` (`.sh` / `.ps1`)
@@ -444,15 +459,16 @@ Seluruh skrip menggunakan pemisah pipa standar ASCII (`|`) pada bagian ringkasan
 
 ---
 
-### B. Perangkat Android PDA (`cmkagent v1.3.6` - 9 Service + HW/SW Inventory)
+### B. Perangkat Android PDA (`cmkagent v1.3.7` - 10 Service + HW/SW Inventory)
 
 ```text
-0 "Agent_Status" connections=42|rejected=0 Status : OK | Version : 1.3.6 | Port : 6556 | Last Pull : 2026-10-28 21:50:00 (1m 0s ago) | Last Client : 192.168.55.112 | Server Cabang : 192.168.55.112:8081 | Collection : Hybrid (pull primary + push backup)
+0 "Agent_Status" connections=42|rejected=0 Status : OK | Version : 1.3.7 | Port : 6556 | Last Pull : 2026-10-28 21:50:00 (1m 0s ago) | Last Client : 192.168.55.112 | Server Cabang : 192.168.55.112:8081 | Collection : Hybrid (pull primary + push backup)
 0 "Health_Battery" battery_level=100;30;15;0;100|battery_health=100.0;80;65;0;100|battery_cycles=4;500;800;0|battery_temp=31.0;42;48|battery_voltage=4.349|battery_current=-180.0 Level : 100% (Full, AC) | Health : 100.0% (OK) | Cycles : 4 | Full Capacity : 2946 mAh | Design Spec : 4800 mAh | Temp : 31.0 C | Voltage : 4.35 V | Current : -180.0 mA | Calc : Full Capacity @ 100% Charge (2946 mAh)
 0 "WiFi_Status" wifi_rssi=-54;-68;-75;-100;0|wifi_speed=433|wifi_roams_1h=2|wifi_roams_total=9 Status : Connected | SSID : BCP-WAREHOUSE | AP : 74:83:C2:11:22:33 (UniFi AP) | Band : 5GHz Ch 36 (5180 MHz) | Signal : -54 dBm | Speed : 433 Mbps | Roaming : 2x/1h (Total 9x, Last 14m 20s ago from 74:83:C2:11:21:00 5GHz Ch 44) | Last Roam : 74:83:C2:11:21:00 (5GHz Ch 44) -> 74:83:C2:11:22:33 [UniFi AP] (5GHz Ch 36) | IP : 192.168.55.189
 0 "Android_Info" uptime=86400 Device : Newland NLS-MT93 | Profile : Newland MT93 (Spec: 4800mAh) | SoC : MT6762V/CB (mt6765) | Arch : aarch64 | Kernel : 4.19.127+ | Android : 11 (SDK 30) | Uptime : 1d 0h 0m
 0 "Ping_192.168.122.10" rta=4.20ms;100;250;0|pl=0.0%;20;50;0;100|rtmin=2.10ms|rtmax=12.40ms Status : OK | Target : 192.168.122.10 | Mode : 1h Summary (60x4=240 pkt) | Loss : 0.0% (240/240 rx) | Avg RTT : 4.2 ms | Min/Max : 2.1/12.4 ms | Last : 3.8 ms | Timeout Min : 0/60 | Window : 20:50-21:50 | Log : 30d Rolling on PDA
 0 "Ping_8.8.8.8" rta=18.50ms;150;300;0|pl=0.0%;20;50;0;100|rtmin=14.00ms|rtmax=35.10ms Status : OK | Target : 8.8.8.8 | Mode : 1h Summary (60x4=240 pkt) | Loss : 0.0% (240/240 rx) | Avg RTT : 18.5 ms | Min/Max : 14.0/35.1 ms | Last : 17.2 ms | Timeout Min : 0/60 | Window : 20:50-21:50 | Log : 30d Rolling on PDA
+0 "Ping_Gateway" rta=1.80ms;50;150;0|pl=0.0%;20;50;0;100|rtmin=0.90ms|rtmax=4.20ms Status : OK | Target : 192.168.55.1 (Gateway Cabang) | Mode : 1h Summary (60x4=240 pkt) | Loss : 0.0% (240/240 rx) | Avg RTT : 1.8 ms | Min/Max : 0.9/4.2 ms | Last : 1.5 ms | Timeout Min : 0/60 | Window : 20:50-21:50 | Log : 30d Rolling on PDA
 ```
 
 ---
@@ -465,7 +481,8 @@ Seluruh skrip menggunakan pemisah pipa standar ASCII (`|`) pada bagian ringkasan
 | **SSID atau BSSID AP Roaming di PDA tertulis `Restricted (Enable Location)`** | Sejak Android 10+, sistem operasi menyembunyikan SSID & BSSID jika izin Lokasi atau toggle GPS dimatikan. | Ketuk tombol **`APP PERMISSIONS`** di aplikasi `cmkagent` -> izinkan **Location (Allow all the time / While using)** & **Nearby Devices**, serta aktifkan toggle **Location (GPS)** di panel cepat Android. |
 | **4 Service baterai lama di PDA masih muncul berstatus *Vanished / Stale* di Checkmk** | Versi `v1.3.6` telah menyatukan seluruh metrik baterai ke dalam 1 baris `Health_Battery`. | Di Web GUI Checkmk, buka **Setup -> Hosts -> pilih Host PDA -> Service configuration -> klik Tabula rasa / Rescan**, lalu **Activate changes**. |
 | **Data SMART SSD/HDD di Windows tidak menampilkan suhu atau TBW** | Driver storage OEM membatasi akses WMI standar. | Jalankan `windows\setup_crystaldiskinfo.ps1` sebagai Administrator agar `disk_nvme_health.ps1` membaca laporan lengkap dari `CrystalDiskInfo`. |
-| **Gagal instalasi `.apk` baru di PDA (*Package conflicts with an existing package*)** | APK sebelumnya ditandatangani dengan *debug key* yang berbeda. | Copot pemasangan (*Uninstall*) aplikasi `cmkagent` versi lama terlebih dahulu, kemudian instal `cmkagent-v1.3.6.apk`. |
+| **Gagal instalasi `.apk` baru di PDA (*Package conflicts with an existing package*)** | APK sebelumnya ditandatangani dengan *debug key* yang berbeda. | Copot pemasangan (*Uninstall*) aplikasi `cmkagent` versi lama terlebih dahulu, kemudian instal `cmkagent-v1.3.7.apk`. |
+| **Service `Ping_Gateway` di Checkmk berstatus `WARN - IP Gateway belum dikonfigurasi`** | Nilai IP Gateway Cabang pada menu Settings PDA masih kosong. | Buka aplikasi `cmkagent` di PDA -> kartu **SETTINGS** -> ketik IP Gateway Cabang atau tekan tombol **`AUTO-DETECT GATEWAY DARI WI-FI`**, lalu klik **SAVE & START AGENT**. |
 
 ---
 
