@@ -225,6 +225,11 @@ sudo rm -rf /usr/lib/check_mk_agent/local/* /var/lib/check_mk_agent/cache/* && \
 curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | \
 sudo bash -s -- -s <IP_SERVER_CABANG>:<PORT_WEB> -d cmk -v 2.5.0p14-1
 ```
+```bash
+sudo rm -rf /usr/lib/check_mk_agent/local/* /var/lib/check_mk_agent/cache/* && \
+curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | \
+sudo bash -s -- -s 192.168.55.112:8081 -d cmk -v 2.5.0p14-1
+```
 > **Daftar Argumen `linux/install.sh`:**
 > - `-s, --server` : IP atau `IP:Port` Server Checkmk Cabang (contoh: `192.168.x.x:8081` atau `192.168.x.x:8080` atau `192.168.x.x`)
 > - `-d, --site` : Nama Site Checkmk (default: `cmk`)
