@@ -18,6 +18,7 @@ if (-not $isAdmin) {
 
 # 2. Konfigurasi Default & Parser Argumen Manual
 $ServerIP      = ""
+$GatewayIP     = ""
 $WebPort       = ""
 $SiteName      = "cmk"
 $AgentVersion  = "2.5.0p14"
@@ -29,6 +30,8 @@ for ($i = 0; $i -lt $args.Count; $i++) {
     switch ($args[$i]) {
         "-s"            { $ServerIP = $args[++$i] }
         "-ServerIP"     { $ServerIP = $args[++$i] }
+        "-gw"           { $GatewayIP = $args[++$i] }
+        "-GatewayIP"    { $GatewayIP = $args[++$i] }
         "-p"            { $WebPort = $args[++$i] }
         "-Port"         { $WebPort = $args[++$i] }
         "-d"            { $SiteName = $args[++$i] }
@@ -52,6 +55,13 @@ if ([string]::IsNullOrWhiteSpace($ServerIP)) {
         Exit
     }
     $ServerIP = $PromptServer.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($GatewayIP)) {
+        $PromptGw = Read-Host "Masukkan IP Gateway Cabang untuk Ping Monitor [Tekan Enter = Auto-Detect]"
+        if (-not [string]::IsNullOrWhiteSpace($PromptGw)) {
+            $GatewayIP = $PromptGw.Trim()
+        }
+    }
 }
 
 # 3. Normalisasi Host & URL Server (Mendukung NAT Port 80 Madiun & Port 8081 Kediri)
@@ -77,6 +87,7 @@ $MsiUrlLegacy     = "$CmkServer/$SiteName/check_mk/agents/windows/check_mk_agent
 
 # Folder direktori pasti (Gunakan variabel konsisten tanpa Join-Path ambigu)
 $AgentDir         = "C:\ProgramData\checkmk\agent"
+$ConfigDir        = "$AgentDir\config"
 $LocalDir         = "$AgentDir\local"
 $PluginsDir       = "$AgentDir\plugins"
 $LogDir           = "$AgentDir\log_custom"
@@ -91,7 +102,7 @@ Write-Host "Target Ver  : $AgentVersion" -ForegroundColor Gray
 Write-Host "Base Server : $CmkServer" -ForegroundColor Gray
 
 # 4. Buat folder yang dibutuhkan jika belum ada
-@($LocalDir, $PluginsDir, $LogDir, $CacheDir) | ForEach-Object {
+@($ConfigDir, $LocalDir, $PluginsDir, $LogDir, $CacheDir) | ForEach-Object {
     if (-not (Test-Path $_)) {
         New-Item -ItemType Directory -Force -Path $_ | Out-Null
     }
@@ -111,7 +122,7 @@ $RegUninstallPaths = @(
     "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
     "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
 )
-$RegAgent = Get-ItemProperty -Path $RegUninstallPaths -ErrorAction SilentlyContinue | 
+$RegAgent = Get-ItemProperty -Path $RegUninstallPaths -ErrorAction SilentlyContinue |
             Where-Object { $_.DisplayName -match "Check(mk|_MK) Agent" } | Select-Object -First 1
 
 if ($RegAgent) {
@@ -252,7 +263,7 @@ Write-Host "[-] Mengunduh script Local Checks dari GitHub..." -ForegroundColor Y
 foreach ($script in $LocalChecks) {
     $scriptUrl   = "$BaseUrl/local_checks/$script"
     $destination = "$LocalDir\$script"
-    
+
     try {
         & curl.exe -s -k -L "$scriptUrl" -o "$destination"
         if (Test-Path $destination) {
@@ -273,7 +284,7 @@ Write-Host "[-] Mengunduh Plugin Resmi Checkmk dari GitHub..." -ForegroundColor 
 foreach ($plugin in $OfficialPlugins) {
     $pluginUrl   = "$BaseUrl/plugins/$plugin"
     $destination = "$PluginsDir\$plugin"
-    
+
     & curl.exe -s -k -L "$pluginUrl" -o "$destination"
     if (Test-Path $destination) {
         Write-Host " -> [OK] Mengunduh plugin: $plugin" -ForegroundColor Green
@@ -299,7 +310,7 @@ try {
     }
     $testArray = $null
     [System.GC]::Collect()
-    
+
     $memoryErrors = Get-CimInstance -ClassName Win32_MemoryDevice | Where-Object { $_.ErrorCorrecting -eq $true -and $_.ErrorDescription -ne $null }
     if ($memoryErrors) {
         Add-Content -Path $LogFile -Value "STATUS: FAILED"
@@ -336,11 +347,74 @@ try {
     Write-Warning "Gagal mendaftarkan Scheduled Task untuk pengujian RAM: $_"
 }
 
-# 9. Konfigurasi Firewall & Service Checkmk
+# 8.1 Konfigurasi IP Gateway Cabang & Penjadwalan Ping Monitor 1 Menit (3 Target + Retensi 30 Hari)
+$GatewayConfigFile = "$ConfigDir\gateway_ip.txt"
+if (-not [string]::IsNullOrWhiteSpace($GatewayIP) -and ($GatewayIP -match '^\d{1,3}(\.\d{1,3}){3}$')) {
+    Set-Content -Path $GatewayConfigFile -Value "LOCKED:$($GatewayIP.Trim())" -Encoding ASCII -Force
+    Write-Host "[OK] IP Gateway Cabang dikunci secara manual ke: $GatewayIP" -ForegroundColor Green
+} else {
+    try {
+        $autoGw = (Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -and $_.NextHop -ne "0.0.0.0" } | Sort-Object RouteMetric, InterfaceMetric | Select-Object -First 1).NextHop
+        if ($autoGw -and ($autoGw -match '^\d{1,3}(\.\d{1,3}){3}$')) {
+            Set-Content -Path $GatewayConfigFile -Value $autoGw.Trim() -Encoding ASCII -Force
+            Write-Host "[OK] IP Gateway Cabang terdeteksi otomatis: $autoGw" -ForegroundColor Green
+        }
+    } catch {}
+}
+
+$PingTaskName = "Checkmk_Ping_Monitor"
+$InfoNetScript = "$LocalDir\info_network.ps1"
+if (Test-Path $InfoNetScript) {
+    try {
+        $PingAction    = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$InfoNetScript`" -CollectOnly"
+        $PingTrigger   = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
+        $PingPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $PingSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+        Register-ScheduledTask -TaskName $PingTaskName -Action $PingAction -Trigger $PingTrigger -Principal $PingPrincipal -Settings $PingSettings -Force | Out-Null
+        Start-ScheduledTask -TaskName $PingTaskName -ErrorAction SilentlyContinue
+        Write-Host "[OK] Windows Task Scheduler '$PingTaskName' (Ping 4x tiap 1 menit + Retensi 30 Hari) berhasil diaktifkan!" -ForegroundColor Green
+    } catch {
+        Write-Warning "Gagal mendaftarkan Scheduled Task '$PingTaskName': $_"
+    }
+}
+
+# 8.2 Setup Auto-Update Skrip Otomatis dari GitHub (Setiap 2 Jam)
+Write-Host "[-] Menyiapkan penjadwalan Auto-Update skrip dari GitHub (Setiap 2 Jam)..." -ForegroundColor Yellow
+$UpdaterPath = "$AgentDir\update_checks.ps1"
+$UpdaterUrl  = "$BaseUrl/update_checks.ps1"
 try {
+    & curl.exe -s -k -L "$UpdaterUrl" -o "$UpdaterPath"
+    if (Test-Path $UpdaterPath) {
+        Unblock-File -Path $UpdaterPath -ErrorAction SilentlyContinue
+        $AutoUpdateTask = "Checkmk_Auto_Update"
+        $UpdateAction   = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$UpdaterPath`" -GithubUser `"$GithubUser`" -GithubRepo `"$GithubRepo`" -Branch `"$Branch`""
+        $UpdateTrigger  = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Hours 2) -RepetitionDuration (New-TimeSpan -Days 3650)
+        $UpdatePrincipal= New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $UpdateSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
+        Register-ScheduledTask -TaskName $AutoUpdateTask -Action $UpdateAction -Trigger $UpdateTrigger -Principal $UpdatePrincipal -Settings $UpdateSettings -Force | Out-Null
+        Write-Host "[OK] Windows Task Scheduler '$AutoUpdateTask' berhasil diaktifkan (Auto-Update tiap 2 jam)!" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Gagal mendaftarkan Scheduled Task Auto-Update: $_"
+}
+
+# 9. Konfigurasi Firewall & Service Checkmk (Dibatasi ke IP Server Checkmk Cabang)
+try {
+    $allowedRemoteIps = @()
+    if ($HostOnly -match '^\d{1,3}(\.\d{1,3}){3}$') {
+        $allowedRemoteIps += $HostOnly
+    } else {
+        $resolvedIps = [System.Net.Dns]::GetHostAddresses($HostOnly) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -ExpandProperty IPAddressToString
+        if ($resolvedIps) { $allowedRemoteIps += $resolvedIps }
+    }
     $rule = Get-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -ErrorAction SilentlyContinue
-    if (-not $rule) {
-        New-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -Direction Inbound -LocalPort 6556 -Protocol TCP -Action Allow | Out-Null
+    if ($allowedRemoteIps.Count -gt 0) {
+        if ($rule) {
+            Set-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -RemoteAddress $allowedRemoteIps -Action Allow | Out-Null
+        } else {
+            New-NetFirewallRule -DisplayName "Checkmk Agent (TCP 6556)" -Direction Inbound -LocalPort 6556 -Protocol TCP -RemoteAddress $allowedRemoteIps -Action Allow | Out-Null
+        }
+        Write-Host "[OK] Firewall TCP 6556 dibatasi khusus untuk IP Server Checkmk Cabang: $($allowedRemoteIps -join ', ')" -ForegroundColor Green
     }
 } catch {}
 
@@ -357,4 +431,4 @@ if (-not (Test-Path $ctlPath)) {
 
 Write-Host "`n=== Proses Instalasi Selesai! Agen Anda Siap Digunakan ===" -ForegroundColor Green
 Write-Host "Untuk mendaftarkan sertifikat agen ke server Checkmk, jalankan perintah berikut sebagai Administrator:" -ForegroundColor Green
-Write-Host " & `"$ctlPath`" register --hostname <NAMA_HOST> --server ${HostOnly}:8000 --site$SiteName --user cmkadmin" -ForegroundColor Yellow
+Write-Host " & `"$ctlPath`" register --hostname <NAMA_HOST> --server ${HostOnly}:8000 --site $SiteName --user cmkadmin" -ForegroundColor Yellow
