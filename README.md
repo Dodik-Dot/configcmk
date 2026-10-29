@@ -225,11 +225,6 @@ sudo rm -rf /usr/lib/check_mk_agent/local/* /var/lib/check_mk_agent/cache/* && \
 curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | \
 sudo bash -s -- -s <IP_SERVER_CABANG>:<PORT_WEB> -d cmk -v 2.5.0p14-1
 ```
-```bash
-sudo rm -rf /usr/lib/check_mk_agent/local/* /var/lib/check_mk_agent/cache/* && \
-curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | \
-sudo bash -s -- -s 192.168.55.112:8081 -d cmk -v 2.5.0p14-1
-```
 > **Daftar Argumen `linux/install.sh`:**
 > - `-s, --server` : IP atau `IP:Port` Server Checkmk Cabang (contoh: `192.168.x.x:8081` atau `192.168.x.x:8080` atau `192.168.x.x`)
 > - `-d, --site` : Nama Site Checkmk (default: `cmk`)
@@ -337,7 +332,7 @@ Setelah agen terpasang di Linux atau Windows, daftarkan sertifikat TLS ke server
 #### 2. Menjalankan Service Discovery di Web GUI Checkmk
 1. Masuk ke **Setup -> Hosts -> Add host**, masukkan **Hostname** dan **IPv4 Address** perangkat.
 2. Klik **Save & go to service configuration**.
-3. Klik **Rescan**  agar seluruh *local checks* terbaru (termasuk penyatuan 1 baris `Health_Battery` dan 3 baris ping `Ping_192.168.122.10`, `Ping_8.8.8.8`, dan `Ping_Gateway` pada PDA) terdeteksi.
+3. Klik **Rescan** atau **Tabula rasa** agar seluruh *local checks* terbaru (termasuk penyatuan 1 baris `Health_Battery` dan 3 baris ping `Ping_192.168.122.10`, `Ping_8.8.8.8`, dan `Ping_Gateway` pada PDA) terdeteksi.
 4. Klik **Accept all** lalu klik **Activate on selected sites** di pojok kanan atas.
 
 ---
