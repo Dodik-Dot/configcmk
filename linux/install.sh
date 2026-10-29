@@ -275,15 +275,11 @@ COMBINED_DMI="${SYS_VENDOR} ${SYS_PRODUCT}"
 
 # Deteksi Motherboard Desktop MSI (seperti MS-7E02 / H610 / B660 / B760) -> Nuvoton NCT6687D
 if echo "$COMBINED_DMI" | grep -iqE "MICRO-STAR|MSI|MS-7"; then
-    echo "[INFO] Terdeteksi motherboard MSI ($SYS_PRODUCT). Mengaktifkan modul sensor Nuvoton (nct6683 / nct6775)..."
-    modprobe nct6683 force=1 2>/dev/null || modprobe nct6683 2>/dev/null || modprobe nct6687 2>/dev/null || modprobe nct6775 2>/dev/null || true
-    if lsmod | grep -q "nct6683"; then
-        grep -q "^nct6683" /etc/modules 2>/dev/null || echo "nct6683" >> /etc/modules 2>/dev/null || true
-        echo "options nct6683 force=1" > /etc/modprobe.d/nct6683.conf 2>/dev/null || true
-    elif lsmod | grep -q "nct6687"; then
-        grep -q "^nct6687" /etc/modules 2>/dev/null || echo "nct6687" >> /etc/modules 2>/dev/null || true
-    elif lsmod | grep -q "nct6775"; then
-        grep -q "^nct6775" /etc/modules 2>/dev/null || echo "nct6775" >> /etc/modules 2>/dev/null || true
+    echo "[INFO] Terdeteksi motherboard MSI ($SYS_PRODUCT). Mengonfigurasi modul sensor Nuvoton nct6683..."
+    modprobe nct6683 force=1 2>/dev/null || modprobe nct6683 2>/dev/null || modprobe nct6775 2>/dev/null || true
+    echo "options nct6683 force=1" > /etc/modprobe.d/nct6683.conf 2>/dev/null || true
+    if ! grep -q "^nct6683" /etc/modules 2>/dev/null; then
+        echo "nct6683" >> /etc/modules 2>/dev/null || true
     fi
 fi
 
