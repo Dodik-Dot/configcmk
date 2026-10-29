@@ -337,7 +337,7 @@ Setelah agen terpasang di Linux atau Windows, daftarkan sertifikat TLS ke server
 #### 2. Menjalankan Service Discovery di Web GUI Checkmk
 1. Masuk ke **Setup -> Hosts -> Add host**, masukkan **Hostname** dan **IPv4 Address** perangkat.
 2. Klik **Save & go to service configuration**.
-3. Klik **Rescan** atau **Tabula rasa** agar seluruh *local checks* terbaru (termasuk penyatuan 1 baris `Health_Battery` dan 3 baris ping `Ping_192.168.122.10`, `Ping_8.8.8.8`, dan `Ping_Gateway` pada PDA) terdeteksi.
+3. Klik **Rescan**  agar seluruh *local checks* terbaru (termasuk penyatuan 1 baris `Health_Battery` dan 3 baris ping `Ping_192.168.122.10`, `Ping_8.8.8.8`, dan `Ping_Gateway` pada PDA) terdeteksi.
 4. Klik **Accept all** lalu klik **Activate on selected sites** di pojok kanan atas.
 
 ---
