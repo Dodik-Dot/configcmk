@@ -19,14 +19,24 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Executes 4x ICMP ping every 1 minute to 192.168.122.10 and 8.8.8.8,
- * stores minute-by-minute logs on the device with a 30-day rolling retention
+ * Executes 4x ICMP ping every 1 minute to 3 targets:
+ * 1) 192.168.122.10 (Local / Core Server)
+ * 2) 8.8.8.8 (Internet / Google DNS)
+ * 3) IP Gateway Kantor Cabang (dikonfigurasi manual saat setting PDA)
+ *
+ * Stores minute-by-minute logs on the device with a 30-day rolling retention
  * (CCTV-style: automatically deletes logs from day 31 onwards), and publishes
- * the aggregated summary to Checkmk every 1 hour (3600 seconds) in 2 separate lines.
+ * the aggregated summary to Checkmk every 1 hour (3600 seconds) in 3 separate lines.
  */
 public final class PingMonitor {
     public static final String TARGET_LOCAL = "192.168.122.10";
     public static final String TARGET_INTERNET = "8.8.8.8";
+    public static final String TARGET_GATEWAY_KEY = "gateway";
+
+    public static final String SERVICE_LOCAL = "Ping_192.168.122.10";
+    public static final String SERVICE_INTERNET = "Ping_8.8.8.8";
+    public static final String SERVICE_GATEWAY = "Ping_Gateway";
+
     public static final int PINGS_PER_MINUTE = 4;
     public static final long REPORT_INTERVAL_SEC = 3600L; // 1 Jam (3600 detik)
     public static final int LOG_RETENTION_DAYS = 30;      // Retensi 30 hari (CCTV style)
@@ -35,7 +45,7 @@ public final class PingMonitor {
     private static final long LOG_RETENTION_MS = LOG_RETENTION_DAYS * 24L * 60L * 60L * 1000L;
     private static final long PRUNE_INTERVAL_MS = 3600L * 1000L; // Cek pembersihan tiap 1 jam
     private static final int SAMPLES_PER_HOUR = 60;
-    private static final long EMERGENCY_MAX_LOG_BYTES = 35L * 1024L * 1024L; // 30 hari ~ 8.1 MB; batas darurat 35 MB
+    private static final long EMERGENCY_MAX_LOG_BYTES = 35L * 1024L * 1024L; // Batas darurat 35 MB
 
     private static final String PREFS = "cmkagent_ping_hourly_v1";
     private static final String LOG_FILE_NAME = "ping_history.log";
@@ -92,8 +102,8 @@ public final class PingMonitor {
 
     /**
      * Called every 1 minute by CheckmkAgentService.
-     * Runs 4x ping to 192.168.122.10 and 4x ping to 8.8.8.8, saves to local phone log,
-     * prunes log lines older than 30 days (day 31+), and rotates the 1-hour Checkmk snapshot.
+     * Runs 4x ping to 192.168.122.10, 8.8.8.8, and branch gateway (if configured),
+     * saves to local phone log (30-day retention), and rotates 1-hour Checkmk snapshots.
      */
     public static synchronized void collectMinuteSample(Context context) {
         if (context == null) return;
@@ -102,12 +112,45 @@ public final class PingMonitor {
         PingSample localSample = executePing(TARGET_LOCAL, PINGS_PER_MINUTE, nowMs);
         PingSample internetSample = executePing(TARGET_INTERNET, PINGS_PER_MINUTE, nowMs);
 
-        appendMinuteLog(context, localSample, internetSample);
+        String gatewayIp = AgentConfig.getGatewayIp(context);
+        PingSample gatewaySample = null;
+        if (AgentConfig.isValidIpv4(gatewayIp)) {
+            checkGatewayIpChange(context, gatewayIp, nowMs);
+            gatewaySample = executePing(gatewayIp, PINGS_PER_MINUTE, nowMs);
+        }
 
-        updateTargetAccumulator(context, TARGET_LOCAL, "Ping_192.168.122.10", localSample, 100.0, 250.0);
-        updateTargetAccumulator(context, TARGET_INTERNET, "Ping_8.8.8.8", internetSample, 150.0, 300.0);
+        appendMinuteLog(context, localSample, internetSample, gatewaySample);
+
+        updateTargetAccumulator(context, TARGET_LOCAL, SERVICE_LOCAL, TARGET_LOCAL, localSample, 100.0, 250.0);
+        updateTargetAccumulator(context, TARGET_INTERNET, SERVICE_INTERNET, TARGET_INTERNET, internetSample, 150.0, 300.0);
+
+        if (gatewaySample != null) {
+            updateTargetAccumulator(context, TARGET_GATEWAY_KEY, SERVICE_GATEWAY,
+                    gatewayIp + " (Gateway Cabang)", gatewaySample, 50.0, 150.0);
+        }
 
         pruneLogsIfDue(context, nowMs);
+    }
+
+    private static void checkGatewayIpChange(Context context, String currentGwIp, long nowMs) {
+        SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String lastTracked = p.getString("gateway_ip_tracked", "");
+        if (!currentGwIp.equals(lastTracked)) {
+            p.edit()
+                    .putString("gateway_ip_tracked", currentGwIp)
+                    .putLong(key(TARGET_GATEWAY_KEY, "win_start_ms"), nowMs)
+                    .putInt(key(TARGET_GATEWAY_KEY, "win_samples"), 0)
+                    .putInt(key(TARGET_GATEWAY_KEY, "win_tx"), 0)
+                    .putInt(key(TARGET_GATEWAY_KEY, "win_rx"), 0)
+                    .putInt(key(TARGET_GATEWAY_KEY, "win_fail_min"), 0)
+                    .putInt(key(TARGET_GATEWAY_KEY, "win_rtt_count"), 0)
+                    .putFloat(key(TARGET_GATEWAY_KEY, "win_rtt_sum"), 0f)
+                    .putFloat(key(TARGET_GATEWAY_KEY, "win_rtt_min"), -1f)
+                    .putFloat(key(TARGET_GATEWAY_KEY, "win_rtt_max"), -1f)
+                    .remove(key(TARGET_GATEWAY_KEY, "pub_line"))
+                    .remove(key(TARGET_GATEWAY_KEY, "pub_sec"))
+                    .apply();
+        }
     }
 
     /**
@@ -124,6 +167,12 @@ public final class PingMonitor {
         }
     }
 
+    /**
+     * Generates 3 separate cached Checkmk service sections:
+     * 1) Ping_192.168.122.10
+     * 2) Ping_8.8.8.8
+     * 3) Ping_Gateway
+     */
     public static String getCheckmkSection(Context context) {
         ensureInitialized(context);
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -131,21 +180,33 @@ public final class PingMonitor {
 
         long pubLocalSec = p.getLong(key(TARGET_LOCAL, "pub_sec"), 0L);
         long pubNetSec = p.getLong(key(TARGET_INTERNET, "pub_sec"), 0L);
+        long pubGwSec = p.getLong(key(TARGET_GATEWAY_KEY, "pub_sec"), 0L);
 
         String lineLocal = p.getString(key(TARGET_LOCAL, "pub_line"), null);
         String lineNet = p.getString(key(TARGET_INTERNET, "pub_line"), null);
+        String lineGw = p.getString(key(TARGET_GATEWAY_KEY, "pub_line"), null);
 
         if (lineLocal == null || lineLocal.isEmpty()) {
-            lineLocal = buildCurrentBufferLine(p, TARGET_LOCAL, "Ping_192.168.122.10", 100.0, 250.0);
+            lineLocal = buildCurrentBufferLine(p, TARGET_LOCAL, TARGET_LOCAL, SERVICE_LOCAL, 100.0, 250.0);
             pubLocalSec = p.getLong(key(TARGET_LOCAL, "win_start_ms"), System.currentTimeMillis()) / 1000L;
         }
         if (lineNet == null || lineNet.isEmpty()) {
-            lineNet = buildCurrentBufferLine(p, TARGET_INTERNET, "Ping_8.8.8.8", 150.0, 300.0);
+            lineNet = buildCurrentBufferLine(p, TARGET_INTERNET, TARGET_INTERNET, SERVICE_INTERNET, 150.0, 300.0);
             pubNetSec = p.getLong(key(TARGET_INTERNET, "win_start_ms"), System.currentTimeMillis()) / 1000L;
+        }
+
+        String gatewayIp = AgentConfig.getGatewayIp(context);
+        if (!AgentConfig.isValidIpv4(gatewayIp)) {
+            pubGwSec = nowSec;
+            lineGw = "1 \"" + SERVICE_GATEWAY + "\" - Status : WARNING | Target : Belum Diisi | Remark : Wajib isi IP Gateway Cabang di Settings PDA";
+        } else if (lineGw == null || lineGw.isEmpty()) {
+            lineGw = buildCurrentBufferLine(p, TARGET_GATEWAY_KEY, gatewayIp + " (Gateway Cabang)", SERVICE_GATEWAY, 50.0, 150.0);
+            pubGwSec = p.getLong(key(TARGET_GATEWAY_KEY, "win_start_ms"), System.currentTimeMillis()) / 1000L;
         }
 
         if (pubLocalSec <= 0L || pubLocalSec > nowSec) pubLocalSec = nowSec;
         if (pubNetSec <= 0L || pubNetSec > nowSec) pubNetSec = nowSec;
+        if (pubGwSec <= 0L || pubGwSec > nowSec) pubGwSec = nowSec;
 
         StringBuilder sb = new StringBuilder();
         sb.append("<<<local:cached(").append(pubLocalSec).append(",")
@@ -154,34 +215,44 @@ public final class PingMonitor {
 
         sb.append("<<<local:cached(").append(pubNetSec).append(",")
           .append(REPORT_INTERVAL_SEC).append("):sep(0)>>>\n");
-        sb.append(lineNet);
+        sb.append(lineNet).append('\n');
+
+        sb.append("<<<local:cached(").append(pubGwSec).append(",")
+          .append(REPORT_INTERVAL_SEC).append("):sep(0)>>>\n");
+        sb.append(lineGw);
+
         return sb.toString();
     }
 
-    public static TargetStatus readStatus(Context context, String target) {
+    public static TargetStatus readStatus(Context context, String targetKey) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         TargetStatus s = new TargetStatus();
-        s.target = target;
-        s.windowSamples = p.getInt(key(target, "win_samples"), 0);
-        s.windowTx = p.getInt(key(target, "win_tx"), 0);
-        s.windowRx = p.getInt(key(target, "win_rx"), 0);
+        if (TARGET_GATEWAY_KEY.equals(targetKey)) {
+            String gw = AgentConfig.getGatewayIp(context);
+            s.target = gw.isEmpty() ? "Gateway Cabang" : gw;
+        } else {
+            s.target = targetKey;
+        }
+        s.windowSamples = p.getInt(key(targetKey, "win_samples"), 0);
+        s.windowTx = p.getInt(key(targetKey, "win_tx"), 0);
+        s.windowRx = p.getInt(key(targetKey, "win_rx"), 0);
         s.windowLossPercent = s.windowTx > 0
                 ? ((s.windowTx - s.windowRx) * 100.0 / s.windowTx) : 0.0;
-        int rttCount = p.getInt(key(target, "win_rtt_count"), 0);
-        double rttSum = p.getFloat(key(target, "win_rtt_sum"), 0f);
+        int rttCount = p.getInt(key(targetKey, "win_rtt_count"), 0);
+        double rttSum = p.getFloat(key(targetKey, "win_rtt_sum"), 0f);
         s.windowAvgMs = rttCount > 0 ? (rttSum / rttCount) : Double.NaN;
-        float minVal = p.getFloat(key(target, "win_rtt_min"), -1f);
-        float maxVal = p.getFloat(key(target, "win_rtt_max"), -1f);
+        float minVal = p.getFloat(key(targetKey, "win_rtt_min"), -1f);
+        float maxVal = p.getFloat(key(targetKey, "win_rtt_max"), -1f);
         s.windowMinMs = minVal >= 0 ? minVal : Double.NaN;
         s.windowMaxMs = maxVal >= 0 ? maxVal : Double.NaN;
-        s.windowFailedMinutes = p.getInt(key(target, "win_fail_min"), 0);
-        s.windowStartMs = p.getLong(key(target, "win_start_ms"), 0L);
-        s.lastSampleMs = p.getLong(key(target, "last_sample_ms"), 0L);
-        float lastAvg = p.getFloat(key(target, "last_avg_ms"), -1f);
+        s.windowFailedMinutes = p.getInt(key(targetKey, "win_fail_min"), 0);
+        s.windowStartMs = p.getLong(key(targetKey, "win_start_ms"), 0L);
+        s.lastSampleMs = p.getLong(key(targetKey, "last_sample_ms"), 0L);
+        float lastAvg = p.getFloat(key(targetKey, "last_avg_ms"), -1f);
         s.lastAvgMs = lastAvg >= 0 ? lastAvg : Double.NaN;
-        s.lastLossPercent = p.getFloat(key(target, "last_loss"), 0f);
-        s.lastPublishedSec = p.getLong(key(target, "pub_sec"), 0L);
-        s.publishedCheckmkLine = p.getString(key(target, "pub_line"), "-");
+        s.lastLossPercent = p.getFloat(key(targetKey, "last_loss"), 0f);
+        s.lastPublishedSec = p.getLong(key(targetKey, "pub_sec"), 0L);
+        s.publishedCheckmkLine = p.getString(key(targetKey, "pub_line"), "-");
         s.logFilePath = getPrimaryLogFile(context).getAbsolutePath();
         return s;
     }
@@ -231,23 +302,23 @@ public final class PingMonitor {
     }
 
     private static void updateTargetAccumulator(
-            Context context, String target, String serviceName,
+            Context context, String targetKey, String serviceName, String targetDisplay,
             PingSample sample, double warnRttMs, double critRttMs) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        long winStartMs = p.getLong(key(target, "win_start_ms"), 0L);
+        long winStartMs = p.getLong(key(targetKey, "win_start_ms"), 0L);
         if (winStartMs <= 0L || sample.timestampMs < winStartMs) {
             winStartMs = sample.timestampMs;
         }
 
-        int winSamples = p.getInt(key(target, "win_samples"), 0) + 1;
-        int winTx = p.getInt(key(target, "win_tx"), 0) + sample.tx;
-        int winRx = p.getInt(key(target, "win_rx"), 0) + sample.rx;
-        int winFailMin = p.getInt(key(target, "win_fail_min"), 0) + (sample.rx == 0 ? 1 : 0);
+        int winSamples = p.getInt(key(targetKey, "win_samples"), 0) + 1;
+        int winTx = p.getInt(key(targetKey, "win_tx"), 0) + sample.tx;
+        int winRx = p.getInt(key(targetKey, "win_rx"), 0) + sample.rx;
+        int winFailMin = p.getInt(key(targetKey, "win_fail_min"), 0) + (sample.rx == 0 ? 1 : 0);
 
-        int rttCount = p.getInt(key(target, "win_rtt_count"), 0);
-        float rttSum = p.getFloat(key(target, "win_rtt_sum"), 0f);
-        float rttMin = p.getFloat(key(target, "win_rtt_min"), -1f);
-        float rttMax = p.getFloat(key(target, "win_rtt_max"), -1f);
+        int rttCount = p.getInt(key(targetKey, "win_rtt_count"), 0);
+        float rttSum = p.getFloat(key(targetKey, "win_rtt_sum"), 0f);
+        float rttMin = p.getFloat(key(targetKey, "win_rtt_min"), -1f);
+        float rttMax = p.getFloat(key(targetKey, "win_rtt_max"), -1f);
 
         if (!Double.isNaN(sample.avgMs)) {
             rttCount++;
@@ -261,9 +332,9 @@ public final class PingMonitor {
         }
 
         SharedPreferences.Editor ed = p.edit();
-        ed.putLong(key(target, "last_sample_ms"), sample.timestampMs);
-        ed.putFloat(key(target, "last_avg_ms"), Double.isNaN(sample.avgMs) ? -1f : (float) sample.avgMs);
-        ed.putFloat(key(target, "last_loss"), (float) sample.lossPercent);
+        ed.putLong(key(targetKey, "last_sample_ms"), sample.timestampMs);
+        ed.putFloat(key(targetKey, "last_avg_ms"), Double.isNaN(sample.avgMs) ? -1f : (float) sample.avgMs);
+        ed.putFloat(key(targetKey, "last_loss"), (float) sample.lossPercent);
 
         long elapsedMs = sample.timestampMs - winStartMs;
         boolean hourCompleted = (elapsedMs >= REPORT_INTERVAL_MS) || (winSamples >= SAMPLES_PER_HOUR);
@@ -275,55 +346,55 @@ public final class PingMonitor {
             double maxMs = rttMax >= 0f ? rttMax : Double.NaN;
 
             String hourlyLine = formatCheckmkPingLine(
-                    serviceName, target, winSamples, winTx, winRx, lossPct,
+                    serviceName, targetDisplay, winSamples, winTx, winRx, lossPct,
                     avgMs, minMs, maxMs, winFailMin, winStartMs, sample.timestampMs,
                     sample.avgMs, warnRttMs, critRttMs, true);
 
             long pubSec = sample.timestampMs / 1000L;
-            ed.putString(key(target, "pub_line"), hourlyLine);
-            ed.putLong(key(target, "pub_sec"), pubSec);
+            ed.putString(key(targetKey, "pub_line"), hourlyLine);
+            ed.putLong(key(targetKey, "pub_sec"), pubSec);
 
-            appendHourlySummaryLog(context, target, winSamples, winTx, winRx, lossPct, avgMs, minMs, maxMs, winStartMs, sample.timestampMs);
+            appendHourlySummaryLog(context, targetDisplay, winSamples, winTx, winRx, lossPct, avgMs, minMs, maxMs, winStartMs, sample.timestampMs);
 
             // Reset 1-hour window for the next hour
-            ed.putLong(key(target, "win_start_ms"), sample.timestampMs);
-            ed.putInt(key(target, "win_samples"), 0);
-            ed.putInt(key(target, "win_tx"), 0);
-            ed.putInt(key(target, "win_rx"), 0);
-            ed.putInt(key(target, "win_fail_min"), 0);
-            ed.putInt(key(target, "win_rtt_count"), 0);
-            ed.putFloat(key(target, "win_rtt_sum"), 0f);
-            ed.putFloat(key(target, "win_rtt_min"), -1f);
-            ed.putFloat(key(target, "win_rtt_max"), -1f);
+            ed.putLong(key(targetKey, "win_start_ms"), sample.timestampMs);
+            ed.putInt(key(targetKey, "win_samples"), 0);
+            ed.putInt(key(targetKey, "win_tx"), 0);
+            ed.putInt(key(targetKey, "win_rx"), 0);
+            ed.putInt(key(targetKey, "win_fail_min"), 0);
+            ed.putInt(key(targetKey, "win_rtt_count"), 0);
+            ed.putFloat(key(targetKey, "win_rtt_sum"), 0f);
+            ed.putFloat(key(targetKey, "win_rtt_min"), -1f);
+            ed.putFloat(key(targetKey, "win_rtt_max"), -1f);
         } else {
-            ed.putLong(key(target, "win_start_ms"), winStartMs);
-            ed.putInt(key(target, "win_samples"), winSamples);
-            ed.putInt(key(target, "win_tx"), winTx);
-            ed.putInt(key(target, "win_rx"), winRx);
-            ed.putInt(key(target, "win_fail_min"), winFailMin);
-            ed.putInt(key(target, "win_rtt_count"), rttCount);
-            ed.putFloat(key(target, "win_rtt_sum"), rttSum);
-            ed.putFloat(key(target, "win_rtt_min"), rttMin);
-            ed.putFloat(key(target, "win_rtt_max"), rttMax);
+            ed.putLong(key(targetKey, "win_start_ms"), winStartMs);
+            ed.putInt(key(targetKey, "win_samples"), winSamples);
+            ed.putInt(key(targetKey, "win_tx"), winTx);
+            ed.putInt(key(targetKey, "win_rx"), winRx);
+            ed.putInt(key(targetKey, "win_fail_min"), winFailMin);
+            ed.putInt(key(targetKey, "win_rtt_count"), rttCount);
+            ed.putFloat(key(targetKey, "win_rtt_sum"), rttSum);
+            ed.putFloat(key(targetKey, "win_rtt_min"), rttMin);
+            ed.putFloat(key(targetKey, "win_rtt_max"), rttMax);
         }
 
         ed.apply();
     }
 
     private static String buildCurrentBufferLine(
-            SharedPreferences p, String target, String serviceName,
+            SharedPreferences p, String targetKey, String targetDisplay, String serviceName,
             double warnRttMs, double critRttMs) {
-        int winSamples = p.getInt(key(target, "win_samples"), 0);
-        int winTx = p.getInt(key(target, "win_tx"), 0);
-        int winRx = p.getInt(key(target, "win_rx"), 0);
-        int winFailMin = p.getInt(key(target, "win_fail_min"), 0);
-        int rttCount = p.getInt(key(target, "win_rtt_count"), 0);
-        float rttSum = p.getFloat(key(target, "win_rtt_sum"), 0f);
-        float rttMin = p.getFloat(key(target, "win_rtt_min"), -1f);
-        float rttMax = p.getFloat(key(target, "win_rtt_max"), -1f);
-        long winStartMs = p.getLong(key(target, "win_start_ms"), System.currentTimeMillis());
-        long lastSampleMs = p.getLong(key(target, "last_sample_ms"), System.currentTimeMillis());
-        float lastAvg = p.getFloat(key(target, "last_avg_ms"), -1f);
+        int winSamples = p.getInt(key(targetKey, "win_samples"), 0);
+        int winTx = p.getInt(key(targetKey, "win_tx"), 0);
+        int winRx = p.getInt(key(targetKey, "win_rx"), 0);
+        int winFailMin = p.getInt(key(targetKey, "win_fail_min"), 0);
+        int rttCount = p.getInt(key(targetKey, "win_rtt_count"), 0);
+        float rttSum = p.getFloat(key(targetKey, "win_rtt_sum"), 0f);
+        float rttMin = p.getFloat(key(targetKey, "win_rtt_min"), -1f);
+        float rttMax = p.getFloat(key(targetKey, "win_rtt_max"), -1f);
+        long winStartMs = p.getLong(key(targetKey, "win_start_ms"), System.currentTimeMillis());
+        long lastSampleMs = p.getLong(key(targetKey, "last_sample_ms"), System.currentTimeMillis());
+        float lastAvg = p.getFloat(key(targetKey, "last_avg_ms"), -1f);
 
         double lossPct = winTx > 0 ? ((winTx - winRx) * 100.0 / winTx) : 0.0;
         double avgMs = rttCount > 0 ? (rttSum / (double) rttCount) : Double.NaN;
@@ -332,13 +403,13 @@ public final class PingMonitor {
         double lastMs = lastAvg >= 0f ? lastAvg : Double.NaN;
 
         return formatCheckmkPingLine(
-                serviceName, target, winSamples, winTx, winRx, lossPct,
+                serviceName, targetDisplay, winSamples, winTx, winRx, lossPct,
                 avgMs, minMs, maxMs, winFailMin, winStartMs, lastSampleMs,
                 lastMs, warnRttMs, critRttMs, false);
     }
 
     private static String formatCheckmkPingLine(
-            String serviceName, String target, int samples, int tx, int rx, double lossPct,
+            String serviceName, String targetDisplay, int samples, int tx, int rx, double lossPct,
             double avgMs, double minMs, double maxMs, int failMinutes,
             long startMs, long endMs, double lastMs,
             double warnRttMs, double critRttMs, boolean completedHour) {
@@ -371,7 +442,7 @@ public final class PingMonitor {
 
         return state + " \"" + serviceName + "\" " + metrics
                 + " Status : " + stateStr
-                + " | Target : " + target
+                + " | Target : " + targetDisplay
                 + " | Mode : " + modeLabel
                 + " | Loss : " + String.format(Locale.US, "%.1f%% (%d/%d rx)", lossPct, rx, tx)
                 + " | Avg RTT : " + avgStr
@@ -473,14 +544,19 @@ public final class PingMonitor {
         return new PingSample(target, timestampMs, count, rx, loss, min, avg, max);
     }
 
-    private static void appendMinuteLog(Context context, PingSample s1, PingSample s2) {
+    private static void appendMinuteLog(Context context, PingSample s1, PingSample s2, PingSample sGw) {
         String ts = formatDateTime(s1.timestampMs);
-        String line = formatSampleLogLine(ts, s1) + "\n" + formatSampleLogLine(ts, s2) + "\n";
-        writeLogString(context, line);
+        StringBuilder sb = new StringBuilder();
+        sb.append(formatSampleLogLine(ts, s1)).append('\n');
+        sb.append(formatSampleLogLine(ts, s2)).append('\n');
+        if (sGw != null) {
+            sb.append(formatSampleLogLine(ts, sGw)).append('\n');
+        }
+        writeLogString(context, sb.toString());
     }
 
     private static void appendHourlySummaryLog(
-            Context context, String target, int samples, int tx, int rx,
+            Context context, String targetDisplay, int samples, int tx, int rx,
             double lossPct, double avgMs, double minMs, double maxMs, long startMs, long endMs) {
         String ts = formatDateTime(endMs);
         String avgStr = !Double.isNaN(avgMs) ? String.format(Locale.US, "%.1fms", avgMs) : "TIMEOUT";
@@ -488,7 +564,7 @@ public final class PingMonitor {
                 ? String.format(Locale.US, "%.1f/%.1fms", minMs, maxMs) : "N/A";
         String summary = String.format(Locale.US,
                 "[%s] === 1H CHECKMK REPORT [%s] window=%s-%s samples=%d pkt=%d/%d loss=%.1f%% avg=%s min/max=%s ===\n",
-                ts, target, formatTimeShort(startMs), formatTimeShort(endMs),
+                ts, targetDisplay, formatTimeShort(startMs), formatTimeShort(endMs),
                 samples, rx, tx, lossPct, avgStr, minMax);
         writeLogString(context, summary);
     }
@@ -498,7 +574,7 @@ public final class PingMonitor {
         String minStr = !Double.isNaN(s.minMs) ? String.format(Locale.US, "%.1fms", s.minMs) : "-";
         String maxStr = !Double.isNaN(s.maxMs) ? String.format(Locale.US, "%.1fms", s.maxMs) : "-";
         return String.format(Locale.US,
-                "[%s] PING %-14s | tx=%d rx=%d loss=%.0f%% min=%s avg=%s max=%s",
+                "[%s] PING %-24s | tx=%d rx=%d loss=%.0f%% min=%s avg=%s max=%s",
                 ts, s.target, s.tx, s.rx, s.lossPercent, minStr, avgStr, maxStr);
     }
 
@@ -575,8 +651,6 @@ public final class PingMonitor {
     private static void pruneSingleLogFile(File logFile, String cutoffTimestamp) {
         if (logFile == null || !logFile.exists()) return;
         try {
-            // Fast check: read the first timestamped line.
-            // If the oldest entry is still within 30 days and file size is within bounds, no rewrite needed.
             boolean needsPrune = logFile.length() > EMERGENCY_MAX_LOG_BYTES;
             if (!needsPrune) {
                 try (BufferedReader peek = new BufferedReader(new FileReader(logFile))) {
@@ -596,7 +670,6 @@ public final class PingMonitor {
 
             File parent = logFile.getParentFile();
             File tmpFile = new File(parent, LOG_TMP_FILE_NAME);
-            int keptLines = 0;
 
             try (BufferedReader reader = new BufferedReader(new FileReader(logFile));
                  BufferedWriter writer = new BufferedWriter(new FileWriter(tmpFile, false))) {
@@ -612,7 +685,6 @@ public final class PingMonitor {
                     if (keepRemaining) {
                         writer.write(line);
                         writer.newLine();
-                        keptLines++;
                     }
                 }
                 writer.flush();
@@ -621,7 +693,6 @@ public final class PingMonitor {
             if (logFile.delete()) {
                 tmpFile.renameTo(logFile);
             } else {
-                // Fallback copy if rename across filesystem fails
                 try (BufferedReader r = new BufferedReader(new FileReader(tmpFile));
                      BufferedWriter w = new BufferedWriter(new FileWriter(logFile, false))) {
                     String l;
@@ -636,9 +707,6 @@ public final class PingMonitor {
         } catch (Throwable ignored) {}
     }
 
-    /**
-     * Extracts "yyyy-MM-dd HH:mm:ss" from "[yyyy-MM-dd HH:mm:ss] ..."
-     */
     private static String extractLineTimestamp(String line) {
         if (line == null || line.length() < 21) return null;
         if (line.charAt(0) == '[' && line.charAt(20) == ']') {
@@ -659,7 +727,7 @@ public final class PingMonitor {
     }
 
     private static String key(String target, String suffix) {
-        return target.replace('.', '_') + "_" + suffix;
+        return target.replace('.', '_').replace(':', '_') + "_" + suffix;
     }
 
     private static String formatDateTime(long ms) {

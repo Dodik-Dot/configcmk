@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
     private EditText designCapacityInput;
     private EditText initialCyclesInput;
     private EditText allowedServerInput;
+    private EditText gatewayIpInput;
     private CheckBox autoStartInput;
     private CheckBox pushEnabledInput;
     private EditText pushUrlInput;
@@ -207,6 +208,23 @@ public class MainActivity extends Activity {
                 "IP Server Checkmk Cabang",
                 InputType.TYPE_CLASS_TEXT,
                 "Masukkan IP atau IP:Port Cabang (misal :80, :8080, :8081)");
+
+        gatewayIpInput = input(settingsSection.content,
+                "IP Gateway Cabang (Ping Monitor Baris ke-3)",
+                InputType.TYPE_CLASS_TEXT,
+                "Contoh: 192.168.55.1 atau 192.168.122.1");
+
+        Button detectGatewayBtn = actionButton("AUTO-DETECT GATEWAY DARI WI-FI", C_CARD_ALT, C_MUTED);
+        detectGatewayBtn.setOnClickListener(v -> {
+            String detected = DeviceMetrics.getDetectedGatewayIp(this);
+            if (!detected.isEmpty()) {
+                gatewayIpInput.setText(detected);
+                Toast.makeText(this, "Gateway terdeteksi: " + detected, Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "Tidak dapat mendeteksi gateway (Pastikan Wi-Fi terhubung)", Toast.LENGTH_SHORT).show();
+            }
+        });
+        settingsSection.content.addView(detectGatewayBtn, matchWrapMargin(0, 0, 0, 8));
 
         designCapacityInput = input(settingsSection.content,
                 "Design Capacity (mAh, 0 = auto)",
@@ -412,6 +430,7 @@ public class MainActivity extends Activity {
                 ? String.format(Locale.US, "%.0f", design) : "0");
         initialCyclesInput.setText(String.valueOf(AgentConfig.getInitialCycleCount(this)));
         allowedServerInput.setText(AgentConfig.getAllowedServer(this));
+        gatewayIpInput.setText(AgentConfig.getGatewayIp(this));
         pushEnabledInput.setChecked(AgentConfig.isPushEnabled(this));
         pushUrlInput.setText(AgentConfig.getPushUrl(this));
         pushTokenInput.setText(AgentConfig.getPushToken(this));
@@ -428,6 +447,7 @@ public class MainActivity extends Activity {
             String initCyclesRaw = initialCyclesInput.getText().toString().trim();
             int initCycles = initCyclesRaw.isEmpty() ? 0 : Integer.parseInt(initCyclesRaw);
             String allowed = allowedServerInput.getText().toString().trim();
+            String gatewayIp = gatewayIpInput.getText().toString().trim();
             boolean pushEnabled = pushEnabledInput.isChecked();
             String pushUrl = pushUrlInput.getText().toString().trim();
             String pushToken = pushTokenInput.getText().toString().trim();
@@ -439,12 +459,15 @@ public class MainActivity extends Activity {
             if (!AgentConfig.isValidAllowedServerList(allowed)) {
                 throw new IllegalArgumentException("Masukkan IP Server Checkmk Cabang terlebih dahulu (bisa IP saja atau IP:Port seperti :80, :8080, :8081)");
             }
+            if (!gatewayIp.isEmpty() && !AgentConfig.isValidIpv4(gatewayIp)) {
+                throw new IllegalArgumentException("Format IP Gateway Cabang tidak valid (contoh: 192.168.55.1)");
+            }
             if (pushInterval < 60 || pushInterval > 86400) throw new IllegalArgumentException("Push interval harus 60-86400 detik");
             if (pushEnabled && !pushUrl.isEmpty()
                     && !(pushUrl.startsWith("http://") || pushUrl.startsWith("https://"))) {
                 throw new IllegalArgumentException("Push URL harus dimulai http:// atau https://");
             }
-            AgentConfig.save(this, hostname, port, design, initCycles, autoStartInput.isChecked(), allowed,
+            AgentConfig.save(this, hostname, port, design, initCycles, autoStartInput.isChecked(), allowed, gatewayIp,
                     pushEnabled, pushUrl, pushToken, pushInterval);
             return true;
         } catch (Exception e) {
@@ -473,6 +496,7 @@ public class MainActivity extends Activity {
         AgentStats.Snapshot stats = AgentStats.read(this);
         PingMonitor.TargetStatus pingLocal = PingMonitor.readStatus(this, PingMonitor.TARGET_LOCAL);
         PingMonitor.TargetStatus pingNet = PingMonitor.readStatus(this, PingMonitor.TARGET_INTERNET);
+        PingMonitor.TargetStatus pingGw = PingMonitor.readStatus(this, PingMonitor.TARGET_GATEWAY_KEY);
 
         String localIp = DeviceMetrics.getLocalIpv4();
         String lastPull = stats.lastPullMs > 0 ? formatDate(stats.lastPullMs) : "Belum ada";
@@ -578,6 +602,12 @@ public class MainActivity extends Activity {
         String pingNetSummary = String.format(Locale.US, "%d/60m (%d pkt) • Loss %.1f%% • Avg %s",
                 pingNet.windowSamples, pingNet.windowTx, pingNet.windowLossPercent,
                 Double.isNaN(pingNet.windowAvgMs) ? "N/A" : String.format(Locale.US, "%.1f ms", pingNet.windowAvgMs));
+        String gwIp = AgentConfig.getGatewayIp(this);
+        String pingGwSummary = !AgentConfig.isValidIpv4(gwIp)
+                ? "Belum dikonfigurasi (Isi di Settings)"
+                : String.format(Locale.US, "%d/60m (%d pkt) • Loss %.1f%% • Avg %s",
+                        pingGw.windowSamples, pingGw.windowTx, pingGw.windowLossPercent,
+                        Double.isNaN(pingGw.windowAvgMs) ? "N/A" : String.format(Locale.US, "%.1f ms", pingGw.windowAvgMs));
 
         networkSection.summary.setText((wifi.connected ? wifi.ssid : "Not Connected")
                 + " • " + rssi + " • Roam " + wifi.roamsLastHour + "x/1h");
@@ -592,6 +622,7 @@ public class MainActivity extends Activity {
                         + "Local IP       : " + wifi.ip + "\n"
                         + "Ping 192.168.122.10 : " + pingLocalSummary + "\n"
                         + "Ping 8.8.8.8        : " + pingNetSummary + "\n"
+                        + "Ping Gateway (" + AgentConfig.getGatewayIpDisplay(this) + ") : " + pingGwSummary + "\n"
                         + "Ping Schedule  : 4x tiap 1 menit -> kirim Checkmk tiap 1 jam\n"
                         + "Ping Retention : 30 Hari (Auto-hapus hari ke-31+ seperti CCTV)\n"
                         + "Ping Log Path  : " + pingLocal.logFilePath + "\n"
@@ -624,7 +655,7 @@ public class MainActivity extends Activity {
         );
 
         settingsSection.summary.setText(AgentConfig.getHostname(this) + "  •  Server "
-                + allowDisplay + "  •  TCP " + AgentConfig.getPort(this));
+                + allowDisplay + "  •  GW " + AgentConfig.getGatewayIpDisplay(this) + "  •  TCP " + AgentConfig.getPort(this));
 
         diagnosticsSection.summary.setText("Pulls " + stats.accepted + "  •  Rejected "
                 + stats.rejected + "  •  Push OK " + stats.pushSuccesses);
@@ -656,11 +687,11 @@ public class MainActivity extends Activity {
     }
 
     private void showPingLogDialog() {
-        showTextDialog("Log Ping Lokal (Retensi 30 Hari CCTV)",
+        showTextDialog("Log Ping Lokal 3-Baris (Retensi 30 Hari CCTV)",
                 PingMonitor.readRecentLogTail(this, 120),
                 "PING 4X NOW",
                 () -> {
-                    Toast.makeText(this, "Menjalankan ping 4x ke 192.168.122.10 & 8.8.8.8...", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Menjalankan ping 4x ke 192.168.122.10, 8.8.8.8, & Gateway Cabang...", Toast.LENGTH_SHORT).show();
                     new Thread(() -> {
                         PingMonitor.collectMinuteSample(getApplicationContext());
                         runOnUiThread(() -> {

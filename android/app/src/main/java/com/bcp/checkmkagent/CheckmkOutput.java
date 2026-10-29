@@ -10,7 +10,7 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class CheckmkOutput {
-    public static final String VERSION = "1.3.6";
+    public static final String VERSION = "1.3.7";
     private static final String PREFS_CACHE = "cmkagent_metrics_cache";
 
     private static final long INTERVAL_RAM_SEC = 1800L;         // RAM: 30 Menit

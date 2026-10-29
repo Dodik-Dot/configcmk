@@ -12,6 +12,7 @@ import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.RouteInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -587,6 +588,42 @@ public final class DeviceMetrics {
         out.roamSummary = roam.summaryText;
 
         return out;
+    }
+
+    public static String getDetectedGatewayIp(Context context) {
+        if (context == null) return "";
+        try {
+            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    Network active = cm.getActiveNetwork();
+                    if (active != null) {
+                        LinkProperties lp = cm.getLinkProperties(active);
+                        if (lp != null) {
+                            for (RouteInfo route : lp.getRoutes()) {
+                                if (route.isDefaultRoute() && route.getGateway() != null) {
+                                    String gw = route.getGateway().getHostAddress();
+                                    if (gw != null && !gw.isEmpty() && !"0.0.0.0".equals(gw)) {
+                                        return gw;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        try {
+            WifiManager wm = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                android.net.DhcpInfo dhcp = wm.getDhcpInfo();
+                if (dhcp != null && dhcp.gateway != 0) {
+                    int g = dhcp.gateway;
+                    return (g & 0xFF) + "." + ((g >> 8) & 0xFF) + "." + ((g >> 16) & 0xFF) + "." + ((g >> 24) & 0xFF);
+                }
+            }
+        } catch (Throwable ignored) {}
+        return "";
     }
 
     private static WifiInfo wifiInfoFromCapabilities(NetworkCapabilities caps) {
