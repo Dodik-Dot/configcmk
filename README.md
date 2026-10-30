@@ -218,7 +218,9 @@ Jalankan perintah berikut sebagai `root` / `sudo` (skrip akan menanyakan IP Serv
 ```bash
 curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | sudo bash
 ```
-
+```bash
+curl -sSL https://raw.githubusercontent.com/Dodik-Dot/configcmk/main/linux/install.sh | tr -d '\r' | sudo bash -s -- -s 192.168.55.112:8081 -d cmk -v 2.5.0p14-1
+```
 #### Opsi 2: Mode Non-Interaktif (Otomatis dengan Parameter Cabang)
 Gunakan parameter `-s <IP_ATAU_IP:PORT>` dan `-d <NAMA_SITE>` untuk instalasi langsung tanpa prompt:
 ```bash
