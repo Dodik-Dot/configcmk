@@ -65,7 +65,7 @@ Pembaruan ini mencakup perombakan besar arsitektur pemantauan Checkmk untuk **3 
 ### C. Matriks Otomasi Multi-Vendor Motherboard Desktop & Laptop
 Installer dan skrip `fan_health.sh` mendeteksi vendor hardware lewat DMI BIOS (`/sys/class/dmi/id/sys_vendor`):
 * **MSI (Micro-Star):** Mengaktifkan modul Nuvoton `nct6683 force=1` (berhasil membaca `1042 RPM` di host `BCPKDR-KASIR-DEWI`).
-* **GIGABYTE / AORUS:** Mengaktifkan modul ITE `it87 ignore_resource_conflict=1 force_id=0x8689` + `gigabyte_wmi` (membaca 6 zona sensor motherboard).
+* **GIGABYTE / AORUS:** Mengaktifkan modul ITE `it87 ignore_resource_conflict=1 force_id=0x8628` (terbukti sukses membaca `1477 RPM` di Gigabyte B760M DS3H AX / chip IT8689E host `bcpkdrinkirawan`), fallback `native`, `0x8689`, `0x8688`, `0x8686` + `gigabyte_wmi`, serta persistensi otomatis di `/etc/modprobe.d/it87.conf` dan `/etc/modules`.
 * **ASUS / ASUSTeK:** Mengaktifkan modul `asus_ec_sensors`, `asus_wmi`, dan `nct6775`.
 * **ASRock:** Mengaktifkan modul Nuvoton/Winbond `nct6775` dan `w83627ehf`.
 * **DELL:** Mengaktifkan modul `dell_smm_hwmon ignore_dmi=1 restricted=0`.
